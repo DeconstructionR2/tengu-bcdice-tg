@@ -1,0 +1,1214 @@
+---
+generated_at: '2026-10-11 16:02:33'
+source_json: references/extracted/tengu_tables.json
+source_commit: ca3d85a
+counts:
+  已映射: 21
+  待裁决: 4
+entries:
+- ja_name: nsrs発狂
+  ascii_key: NSRS
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 7
+  char_count: 1087
+  dice:
+    a: 1d3
+    b: 1d6
+    c: 1d6+1
+    d: 1d3+1
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  min_index: 1
+  max_index: 7
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: c
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: d
+    expr: 1d3+1
+    base: 1d3
+    min_sum: 2
+    max_sum: 4
+    items_offset: 1
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'nsrs発狂(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["nsrs発狂"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:275-291
+  note: NSRS 発狂（ニンジャ PC 側、4 骰型 a=1d3/b=1d6/c=1d6+1/d=1d3+1）。计划 §5「BCDice 缺失 NSRS，镜像 NRS 实现」——本表是 2版唯一真正的**新增 NRS 族**表。
+- ja_name: ソウカイヤカルマロンダリング
+  ascii_key: KRS
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 12
+  char_count: 2081
+  dice:
+    a: 1d3+x
+    b: 1d6+x
+    c: 1d6+1+x
+    d: 2d6+x
+  datarange:
+    max: 12
+    min: 1
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  min_index: 1
+  max_index: 12
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3+x
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d6+x
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: c
+    expr: 1d6+1+x
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: d
+    expr: 2d6+x
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'ソウカイヤカルマロンダリング(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["ソウカイヤカルマロンダリング"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:112-137
+  note: ソウカイヤ派 a=1d3+x / b=1d6+x / c=1d6+1+x / d=2d6+x，datarange 1..12
+- ja_name: ザイバツカルマロンダリング
+  ascii_key: KRZ
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 1649
+  dice:
+    a: 1d3+x
+    b: 1d3+1+x
+    c: 2d3+x
+    d: d3+3+x
+  datarange:
+    max: 6
+    min: 1
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3+x
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d3+1+x
+    base: 1d3
+    min_sum: 2
+    max_sum: 4
+    items_offset: 1
+  - key: c
+    expr: 2d3+x
+    base: 2d3
+    min_sum: 2
+    max_sum: 6
+    items_offset: 0
+  - key: d
+    expr: d3+3+x
+    base: 1d3
+    min_sum: 4
+    max_sum: 6
+    items_offset: 3
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'ザイバツカルマロンダリング(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["ザイバツカルマロンダリング"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:138-157
+  note: ザイバツ派 a=1d3+x / b=1d3+1+x / c=2d3+x / d=d3+3+x，datarange 1..6
+- ja_name: アマクダリカルマロンダリング
+  ascii_key: KRA
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 1327
+  dice:
+    a: 1d3+x
+    b: 1d3+1+x
+    c: 2d3+x
+    d: d3+3+x
+  datarange:
+    max: 6
+    min: 1
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3+x
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d3+1+x
+    base: 1d3
+    min_sum: 2
+    max_sum: 4
+    items_offset: 1
+  - key: c
+    expr: 2d3+x
+    base: 2d3
+    min_sum: 2
+    max_sum: 6
+    items_offset: 0
+  - key: d
+    expr: d3+3+x
+    base: 1d3
+    min_sum: 4
+    max_sum: 6
+    items_offset: 3
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'アマクダリカルマロンダリング(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["アマクダリカルマロンダリング"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:158-177
+  note: アマクダリ派 a=1d3+x / b=1d3+1+x / c=2d3+x / d=d3+3+x，datarange 1..6
+- ja_name: オムラカルマロンダリング
+  ascii_key: KRO
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 668
+  dice:
+    a: 1d3+x
+    b: 1d3+1+x
+    c: 2d3+x
+    d: d3+3+x
+  datarange:
+    max: 6
+    min: 1
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3+x
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d3+1+x
+    base: 1d3
+    min_sum: 2
+    max_sum: 4
+    items_offset: 1
+  - key: c
+    expr: 2d3+x
+    base: 2d3
+    min_sum: 2
+    max_sum: 6
+    items_offset: 0
+  - key: d
+    expr: d3+3+x
+    base: 1d3
+    min_sum: 4
+    max_sum: 6
+    items_offset: 3
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'オムラカルマロンダリング(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["オムラカルマロンダリング"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:178-197
+  note: オムラ派 a=1d3+x / b=1d3+1+x / c=2d3+x / d=d3+3+x，datarange 1..6
+- ja_name: ヨロシサンカルマロンダリング
+  ascii_key: KRY
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 689
+  dice:
+    a: 1d3+x
+    b: 1d3+1+x
+    c: 2d3+x
+    d: d3+3+x
+  datarange:
+    max: 6
+    min: 1
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d3+x
+    base: 1d3
+    min_sum: 1
+    max_sum: 3
+    items_offset: 0
+  - key: b
+    expr: 1d3+1+x
+    base: 1d3
+    min_sum: 2
+    max_sum: 4
+    items_offset: 1
+  - key: c
+    expr: 2d3+x
+    base: 2d3
+    min_sum: 2
+    max_sum: 6
+    items_offset: 0
+  - key: d
+    expr: d3+3+x
+    base: 1d3
+    min_sum: 4
+    max_sum: 6
+    items_offset: 3
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D3
+  yml_name: 'ヨロシサンカルマロンダリング(1D3) ＞ '
+  multi_dice: true
+  json_path: $.tables["ヨロシサンカルマロンダリング"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:198-217
+  note: ヨロシサン派 a=1d3+x / b=1d3+1+x / c=2d3+x / d=d3+3+x，datarange 1..6
+- ja_name: 初期ジツ系統
+  ascii_key: NJI
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 1889
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: '初期ジツ系統(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["初期ジツ系統"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:5-15
+  note: 初期ジツ系統（1d6）
+- ja_name: 初期スキル
+  ascii_key: NJS
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 1393
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: '初期スキル(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["初期スキル"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:16-26
+  note: 初期スキル（1d6）
+- ja_name: 初期アイテム
+  ascii_key: NJN
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 940
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: '初期アイテム(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["初期アイテム"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:27-37
+  note: 初期アイテム（1d6）
+- ja_name: 初期知識スキル
+  ascii_key: NJK
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 36
+  char_count: 1729
+  dice:
+    a: 1d36
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  - '13'
+  - '14'
+  - '15'
+  - '16'
+  - '17'
+  - '18'
+  - '19'
+  - '20'
+  - '21'
+  - '22'
+  - '23'
+  - '24'
+  - '25'
+  - '26'
+  - '27'
+  - '28'
+  - '29'
+  - '30'
+  - '31'
+  - '32'
+  - '33'
+  - '34'
+  - '35'
+  - '36'
+  min_index: 1
+  max_index: 36
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d36
+    base: 1d36
+    min_sum: 1
+    max_sum: 36
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D36
+  yml_name: '初期知識スキル(1D36) ＞ '
+  multi_dice: false
+  json_path: $.tables["初期知識スキル"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:38-78
+  note: 初期知識スキル d36（36 条）
+- ja_name: 初期サイバネ
+  ascii_key: NJC
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 6
+  char_count: 686
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: '初期サイバネ(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["初期サイバネ"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:79-89
+  note: 初期サイバネ（1d6）
+- ja_name: 生い立ち
+  ascii_key: NJB
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
+  item_count: 36
+  char_count: 7719
+  dice:
+    a: 1d36
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  - '13'
+  - '14'
+  - '15'
+  - '16'
+  - '17'
+  - '18'
+  - '19'
+  - '20'
+  - '21'
+  - '22'
+  - '23'
+  - '24'
+  - '25'
+  - '26'
+  - '27'
+  - '28'
+  - '29'
+  - '30'
+  - '31'
+  - '32'
+  - '33'
+  - '34'
+  - '35'
+  - '36'
+  min_index: 1
+  max_index: 36
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d36
+    base: 1d36
+    min_sum: 1
+    max_sum: 36
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D36
+  yml_name: '生い立ち(1D36) ＞ '
+  multi_dice: false
+  json_path: $.tables["生い立ち"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:218-258
+  note: ネオサイタマ生い立ち d36（36 条）
+- ja_name: wasshoiエントリー_1
+  ascii_key: WS
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 6
+  char_count: 563
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: 'wasshoiエントリー_1(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["wasshoiエントリー_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:303-313
+  note: 1版 Wasshoi!エントリー（1d6）。上游 NinjaSlayer（1版）只有 NJ/EV/AT/EL + SB 五条命令，**无 WS** → 真正的新增表
+- ja_name: ジツ拡張サイバネ暴走_1
+  ascii_key: JITSB
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 7
+  char_count: 1538
+  dice:
+    a: 1d6
+    b: 1d6+1
+    d: 1d6
+    d6: 1d6
+    1d: 1d6
+    1d6: 1d6
+    d+1: 1d6+1
+    1d+1: 1d6+1
+    d6+1: 1d6+1
+    1d6+1: 1d6+1
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  min_index: 1
+  max_index: 7
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: b
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: d
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: d6
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: 1d
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: 1d6
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: d+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: 1d+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: d6+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: 1d6+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D6
+  yml_name: 'ジツ拡張サイバネ暴走_1(1D6) ＞ '
+  multi_dice: true
+  json_path: $.tables["ジツ拡張サイバネ暴走_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:314-336
+  note: 1版 ジツ拡張サイバネ暴走（data 1..7；源码 dice 映射含 10 个骰型别名：1d/1d6/d+1/1d6+1 等）
+- ja_name: 暗黒カラテ衝動_1
+  ascii_key: DKKI
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 6
+  char_count: 1412
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: '暗黒カラテ衝動_1(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["暗黒カラテ衝動_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:337-347
+  note: 1版 暗黒カラテ衝動（1d6，6 条；第 5、6 条同文）
+- ja_name: カルマロンダリング_1
+  ascii_key: KRM
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 12
+  char_count: 2010
+  dice:
+    a: 1d6
+    b: 1d6+1
+    c: 2d6
+    d: 1d6
+    d6: 1d6
+    1d: 1d6
+    1d6: 1d6
+    d+1: 1d6+1
+    1d+1: 1d6+1
+    d6+1: 1d6+1
+    1d6+1: 1d6+1
+    2d: 2d6
+    2d6: 2d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  min_index: 1
+  max_index: 12
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: b
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: c
+    expr: 2d6
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  - key: d
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: d6
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: 1d
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: 1d6
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  - key: d+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: 1d+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: d6+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: 1d6+1
+    expr: 1d6+1
+    base: 1d6
+    min_sum: 2
+    max_sum: 7
+    items_offset: 1
+  - key: 2d
+    expr: 2d6
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  - key: 2d6
+    expr: 2d6
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
+  yml_type: 1D6
+  yml_name: 'カルマロンダリング_1(1D6) ＞ '
+  multi_dice: true
+  json_path: $.tables["カルマロンダリング_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:348-378
+  note: 1版 カルマロンダリング（data 1..12；源码 dice 映射含 13 个骰型别名，c=2d6）
+- ja_name: サイバネ狂気判定_1
+  ascii_key: CYBER
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 11
+  char_count: 2663
+  dice:
+    a: 2d6
+  datarange:
+  data_index:
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  min_index: 2
+  max_index: 12
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-2]；偏移恒为 2
+  dice_offsets:
+  - key: a
+    expr: 2d6
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 2D6
+  yml_name: 'サイバネ狂気判定_1(2D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["サイバネ狂気判定_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:379-394
+  note: 1版 サイバネ狂気判定（2d6，data 2..12 共 11 条）
+- ja_name: バイオサイバネ狂気判定_1
+  ascii_key: BIOCYBER
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 6
+  char_count: 1416
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: 'バイオサイバネ狂気判定_1(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["バイオサイバネ狂気判定_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:395-405
+  note: 1版 バイオサイバネ狂気判定（1d6，6 条）
+- ja_name: ソウル鑑定_1
+  ascii_key: SOUL
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 6
+  char_count: 2530
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: 'ソウル鑑定_1(1D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["ソウル鑑定_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:406-416
+  note: 1版 ソウル鑑定（1d6，6 条；1↔2、3↔4、5↔6 成对同文）
+- ja_name: ソーマトリコール_1
+  ascii_key: SUMMON
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 11
+  char_count: 489
+  dice:
+    a: 2d6
+  datarange:
+  data_index:
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  min_index: 2
+  max_index: 12
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-2]；偏移恒为 2
+  dice_offsets:
+  - key: a
+    expr: 2d6
+    base: 2d6
+    min_sum: 2
+    max_sum: 12
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 2D6
+  yml_name: 'ソーマトリコール_1(2D6) ＞ '
+  multi_dice: false
+  json_path: $.tables["ソーマトリコール_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:417-432
+  note: 1版 ソーマトリコール（2d6，data 2..12 共 11 条）
+- ja_name: 生い立ち_1
+  ascii_key: BK
+  target_file: i18n/NinjaSlayerEx/ja_jp.yml
+  namespace: NinjaSlayerEx
+  status: 已映射
+  item_count: 36
+  char_count: 6227
+  dice:
+    a: 1d36
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  - '13'
+  - '14'
+  - '15'
+  - '16'
+  - '17'
+  - '18'
+  - '19'
+  - '20'
+  - '21'
+  - '22'
+  - '23'
+  - '24'
+  - '25'
+  - '26'
+  - '27'
+  - '28'
+  - '29'
+  - '30'
+  - '31'
+  - '32'
+  - '33'
+  - '34'
+  - '35'
+  - '36'
+  min_index: 1
+  max_index: 36
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_offsets:
+  - key: a
+    expr: 1d36
+    base: 1d36
+    min_sum: 1
+    max_sum: 36
+    items_offset: 0
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D36
+  yml_name: '生い立ち_1(1D36) ＞ '
+  multi_dice: false
+  json_path: $.tables["生い立ち_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:433-473
+  note: 1版 ネオサイタマ生い立ち d36（36 条）
+- ja_name: サツバツ
+  ascii_key:
+  target_file:
+  namespace:
+  status: 待裁决
+  item_count: 6
+  char_count: 855
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  json_path: $.tables["サツバツ"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:90-100
+  note: "**待裁决**。上游 BCDice NinjaSlayer2.table.SATSUBATSU 已覆盖同表（正文同源），天狗版多一层 『**痛烈な一撃**：『痛打+1』、『弾き飛ばし』』式**加粗效果摘要标题** + `「…」`→`**…**：` markdown 化 + 换行重排。三种处置待用户选：(A) 不搬——继承上游 SB 即可，丢失天狗的摘要标题；(B) 搬进 NinjaSlayer2Ex 但用**不同 ASCII 键**（如 SBT）让 Ex 侧 `/SB` 仍走父类，天狗风格表走新键；(C) 搬进 NinjaSlayerEx 与 1版 SB 同键空间。"
+- ja_name: wasshoiエントリー
+  ascii_key:
+  target_file:
+  namespace:
+  status: 待裁决
+  item_count: 6
+  char_count: 723
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  json_path: $.tables["wasshoiエントリー"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:101-111
+  note: "**待裁决**。同 サツ巴ツ：上游 NinjaSlayer2.table.WASSHOI 已覆盖。天狗版除摘要标题外还有**条目顺序差异**（天狗第 3 项 =「KRAAAAASH 窓を突き破り出現！」，上游第 5 项才是它），不是纯呈现差异 → 顺序语义差异须用户裁决。"
+- ja_name: nrs発狂
+  ascii_key:
+  target_file:
+  namespace:
+  status: 待裁决
+  item_count: 7
+  char_count: 1025
+  dice:
+    a: 1d3
+    b: 1d6
+    c: 1d6+1
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  min_index: 1
+  max_index: 7
+  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  json_path: $.tables["nrs発狂"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:259-274
+  note: "**待裁决**。上游 BCDice NinjaSlayer2.table.NRS 已覆盖（type 1D7，7 条，正文同源），天狗版多摘要标题。计划 §5 只把「NSRS発狂」列为 BCDice 缺失项（已按 :nsl2ex/NSRS 搬入），**未提 nrs発狂** → 默认不搬。"
+- ja_name: サツバツ_1
+  ascii_key:
+  target_file:
+  namespace:
+  status: 待裁决
+  item_count: 6
+  char_count: 941
+  dice:
+    a: 1d6
+  datarange:
+  data_index:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  min_index: 1
+  max_index: 6
+  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  json_path: $.tables["サツバツ_1"]
+  source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:292-302
+  note: "**待裁决**。与上游 1版 NinjaSlayer 内联 SATSUBATSU_TABLE 归一化后 6/6 **完全同源**（纯 markdown/全角呈现差异），而 1版 NinjaSlayer 已有 SB 命令 → 纯重复。计划 §5 的「1版 9 表」清单里也是 wasshoi_1 而**非** サツバツ_1，与本实测一致。建议不搬（见 docs/t1.2-naming-proposal.md §A2）。"
