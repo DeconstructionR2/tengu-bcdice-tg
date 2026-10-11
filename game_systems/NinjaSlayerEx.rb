@@ -374,7 +374,7 @@ module BCDice
       #      本组**不设** `\A`/`\z` 之外的锚点自由，元组正则整体锚定，
       #      且无前缀遮蔽，故顺序在此不影响结果——写成降序只是为了
       #      「最长先试」这一意图在源码里一眼可读，与 prefixes_pattern 覆写同构。
-      RE_EDITION1 = /\A(BIOCYBER|SUMMON|JITSB|CYBER|DKKI|SOUL|KRM|BK|WS)(?:_([ABC]))?(?:@([1-9]\d*))?\z/i.freeze
+      RE_EDITION1 = /\A(BIOCYBER|SUMMON|JITSB|CYBER|DKKI|SOUL|KRM|BK|WS)(?:_([ABC]))?(?:@([1-9]\d{0,5}))?\z/i.freeze
 
       # ======================================================================
       # prefixes_pattern 覆写（T1.7）—— 前缀交替顺序固定为长度降序

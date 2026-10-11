@@ -504,7 +504,7 @@ module BCDice
       # ⚠ 不可写成 `^(...)(?:@(\d+))?$` 的可省略嵌套——虽然功能上等价，
       #   但会把「不掷骰的定値」与「掷骰」在一条分支里混起来，
       #   读代码时容易误以为裸命令会走 @n 路径。分成两组捕获更清晰。
-      RE_CHARAMAKE = /^(NJI|NJS|NJN|NJK|NJC|NJB)(?:@([1-9]\d*))?$/i.freeze
+      RE_CHARAMAKE = /^(NJI|NJS|NJN|NJK|NJC|NJB)(?:@([1-9]\d{0,5}))?$/i.freeze
 
       # 聖戦判定的命令正则。
       #

@@ -31,10 +31,23 @@ def hr(title)
   puts "\n#{'=' * 78}\n#{title}\n#{'=' * 78}"
 end
 
+$failures = 0
+
 def check(label)
   ok = yield
+  $failures += 1 unless ok
   puts format("  [%s] %s", ok ? "OK  " : "NG  ", label)
   ok
+end
+
+# kimi 总复核 P4：spike 也要有非零 exit——否则挂在门禁路径上等于装饰。
+at_exit do
+  if $failures.zero?
+    puts "\n✅ spike_t1_6 全部通过"
+  else
+    puts "\n❌ spike_t1_6 有 #{$failures} 项失败"
+    exit(1)
+  end
 end
 
 # ---------------------------------------------------------------------------

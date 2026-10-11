@@ -220,6 +220,19 @@ class TestLedgerConsistency < Test::Unit::TestCase
   # T1.7 的 9 张 1版表（顺序 = yml / ledger 顺序）。
   EDITION1_KEYS = %w[WS JITSB DKKI KRM CYBER BIOCYBER SOUL SUMMON BK].freeze
 
+  # 2版 14 键（kimi 总复核 P3：逐字对拍此前只覆盖 1版——2版侧同样可能抄写漂移）
+  EDITION2_KEYS = %w[NSRS KRS KRZ KRA KRO KRY NJI NJS NJN NJK NJC NJB SBX WSX].freeze
+
+  EDITION2_KEY_TO_JA = {
+    "NSRS" => "nsrs発狂",
+    "KRS" => "ソウカイヤカルマロンダリング", "KRZ" => "ザイバツカルマロンダリング",
+    "KRA" => "アマクダリカルマロンダリング", "KRO" => "オムラカルマロンダリング",
+    "KRY" => "ヨロシサンカルマロンダリング",
+    "NJI" => "初期ジツ系統", "NJS" => "初期スキル", "NJN" => "初期アイテム",
+    "NJK" => "初期知識スキル", "NJC" => "初期サイバネ", "NJB" => "生い立ち",
+    "SBX" => "サツバツ", "WSX" => "wasshoiエントリー"
+  }.freeze
+
   # 逐表登记的期望值（**独立于 ledger 的第二份抄本**）。
   #
   # 为什么要独立抄一份而不是只读 ledger：三方交叉校验（ledger ↔ 代码 ↔ yml）
@@ -592,5 +605,32 @@ class TestLedgerConsistency < Test::Unit::TestCase
     s = raw.to_s.downcase.gsub("+x", "").strip
     s = "1#{s}" if s.start_with?("d")
     s
+  end
+
+  # ⑨b **2版 yml 正文逐字保真**（kimi 总复核 P3：同模式推广到 2版 14 键——
+  # 1版 ⑨ 的模式说明见上；这里补的是 2版侧此前无常驻对拍的盲区）。
+  def test_edition2_yml_items_verbatim_match_tengu_source
+    json = JSON.parse(File.read(File.join(ROOT, "references/extracted/tengu_tables.json"), encoding: "UTF-8"))
+
+    EDITION2_KEYS.each do |key|
+      ja = EDITION2_KEY_TO_JA.fetch(key)
+      src = json.fetch("tables").fetch(ja)
+      want = rewrite_items(src["items"]) # 声明式改写后形态（与生成器同函数）
+      got = I18n.t("NinjaSlayer2Ex.table.#{key}.items", locale: :ja_jp, raise: true)
+
+      assert_equal(src["items"].size, got.size, "#{key}（#{ja}）条目数与天狗源不符")
+      want.each_with_index do |w, i|
+        next if got[i] == w
+
+        flunk("#{key}（#{ja}）第 #{i + 1} 项正文与天狗源**不一致**——" \
+              "这是抄写/改写漂移，不是显示差异（源 #{w[0, 40].inspect} vs yml #{got[i].to_s[0, 40].inspect}）")
+      end
+
+      # name 核对：yml type 只表达基础骰型（+x 補正按设计剥离进 ledger，见 roll_note），
+      # 故期望值先过 normalize_1_dice_expr（去 +x）再 upcase——与生成器同口径。
+      assert_equal("#{ja}(#{normalize_1_dice_expr(src['dice']['a'] || src['dice'].values.first).upcase}) ＞ ",
+                   I18n.t("NinjaSlayer2Ex.table.#{key}.name", locale: :ja_jp, raise: true),
+                   "#{key} 的 yml name 与天狗原表名/骰型标记不一致")
+    end
   end
 end

@@ -4,6 +4,10 @@ source "https://rubygems.org"
 # 引擎：BCDice 钉版。升级纪律（计划 §9 / R9）：
 #   改版本号 → bundle update bcdice → 全量测试绿 → 提交 Gemfile.lock
 # 上游零修改，扩展类在 game_systems/ 继承注册（计划 §3 决2）
+# 升级时另需 diff 上游三处核心机制（我们覆写/复制过它们的语义）：
+#   base.rb 的 prefixes_pattern / dice_command（secret 捕获语义）、
+#   NinjaSlayer2.rb 的 proc_dice_2nd（proc_ex_diceroll 复制其骨架）。
+#   守卫锚点：test/engine_structure_test.rb（结构断言，升级改版当场红）。
 # ============================================================
 gem "bcdice", "3.17.0"
 
