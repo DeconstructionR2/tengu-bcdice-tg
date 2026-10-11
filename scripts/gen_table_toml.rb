@@ -690,6 +690,40 @@ def generate_edition1_block
     total += 1
   end
 
+  # ---- ④b 定値域**不随后缀收紧**（kimi T1.7 评审翻车点 2 的钉子）----
+  #
+  # 天狗的定値表示走 `/fnd <表名>#<出目>`，**与骰型快捷键正交**：
+  # `,C,` 选骰型只影响掷骰路径，定値路径直接拿字符串键查 data。
+  # 故 `KRM_C@1` **必须响应**（出目 1 落在 KRM 的表跨度 1..12 内，
+  # 尽管 2D6 骰型本身掷不出 1），而 `CYBER@1` 必须**不响应**
+  # （CYBER 的 data 键是 2..12，出目 1 越界）。
+  #
+  # 这两条不写死，日后有人给 proc_edition1_table 加
+  # 「fixed 须落在 spec 可达域内」的守卫时，测试网会全绿而行为静默偏离天狗。
+  orthogonal_fixed = [
+    ["KRM_C@1",  "定値域不随后缀收紧：KRM 的 2D6 骰型掷不出 1，但出目 1 在表跨度内 → 仍响应"],
+    ["KRM_C@12", "同上，KRM_C 的上界：出目 12（= data 键 12）→ 响应"],
+    ["CYBER_A@1", "反向对照：CYBER 的 data 键是 2..12，出目 1 越界 → 不响应（在异常系）"]
+  ]
+  orthogonal_fixed.each do |input, comment|
+    output, result = eval_case1(input, [])
+    if input.start_with?("CYBER")
+      abort_with("#{input} 应不响应，但真实 eval 有了输出（#{comment}）") unless output.nil?
+      next # 不响应的那条在异常系里单独钉，这里只做生成期自检
+    end
+
+    abort_with("#{input} 未响应——#{comment}") if output.nil?
+    key = input.split("@").first.sub(/_[ABC]\z/, "")
+    n = input[/@(\d+)/, 1].to_i
+    want = I18n.t("NinjaSlayerEx.table.#{key}.items", locale: :ja_jp, raise: true)[n - CODE1_MIN_INDEX.fetch(key)]
+    abort_with("#{input}: 正文与 yml 不一致") unless output.split(" ＞ ", 2)[1] == want
+
+    out << "# #{comment}"
+    out << render_edition1_case(input, [], output)
+    out << ""
+    total += 1
+  end
+
   # ---- ⑤ 暗骰档：S 前缀形态（T1.7 prefixes_pattern 覆写的直接受益者）----
   # 1版 14 个前缀两两无遮蔽，故暗骰形态本就可用；本档是**回归钉**，
   # 保证日后有人改 prefixes_pattern 覆写时不会静默回归掉。
@@ -727,6 +761,12 @@ T17_ERROR_CASES = [
   "WS@0", "WS@7", "WS@99", "JITSB@0", "JITSB@8", "DKKI@0", "DKKI@7",
   "KRM@0", "KRM@13", "CYBER@1", "CYBER@0", "CYBER@13",
   "BIOCYBER@0", "BIOCYBER@7", "SOUL@0", "SOUL@7",
+  # ②b **定値域不随后缀收紧**的反向对照（kimi T1.7 评审翻车点 2）：
+  #      `KRM_C@1` 必须响应（出目 1 在 KRM 表跨度 1..12 内，尽管 2D6 掷不出 1，
+  #      天狗 /fnd 的定値与骰型快捷键正交）；
+  #      但 `CYBER_A@1` 必须**不响应**（CYBER 的 data 键是 2..12，出目 1 越界）。
+  #      两条一起钉住「定値只认表跨度、不认骰型可达域」这一语义。
+  "CYBER_A@1", "CYBER_B@1", "SUMMON_A@1",
   "SUMMON@1", "SUMMON@0", "SUMMON@13", "BK@0", "BK@37", "BK@99",
   # ③ 前导零（天狗 /fnd 是字符串键直查，"03" 查不到 → 不响应）
   "WS@03", "JITSB@02", "CYBER@02", "BK@012",

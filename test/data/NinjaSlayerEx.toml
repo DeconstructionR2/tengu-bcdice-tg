@@ -1396,6 +1396,22 @@ rands = [
   { sides = 36, value = 2 },
 ]
 
+# 定値域不随后缀收紧：KRM 的 2D6 骰型掷不出 1，但出目 1 在表跨度内 → 仍响应
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "KRM_C@1"
+output = "カルマロンダリング_1(1) ＞ **『痴れ者めが！』：**\n君の行いは、裏社会の掟や規律までも乱しかねないほど残虐で無軌道であったため、ラオモトの耳にも入っている。狂犬を躾もせず野放しにしていては、ソウカイヤのビジネスに悪影響が出るだろう。\n**このPCはケジメを強いられて【名声：ソウカイヤ】が−3され、さらに『ニンジャソウルの闇』を獲得してしまう。通算で３回『痴れ者めが！』を出してしまった場合、そのPCは突如現れたダークニンジャにより抹殺される（キャラロスト）。**"
+rands = [
+]
+
+# 同上，KRM_C 的上界：出目 12（= data 键 12）→ 响应
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "KRM_C@12"
+output = "カルマロンダリング_1(12) ＞ **『リー先生のラボへ行け。お前のニンジャソウルを確かめる必要がある』：**\nラオモト・カンはただならぬニンジャ存在感を感じ取った。もしかすると、君に憑依していたのは単なるレッサーニンジャソウルなどではなく、グレーター、あるいはアーチ級ソウルだったのかもしれない。正体が明かされるかどうかは不明だが、少なくとも、溢れ出すそのキリングオーラは周囲のソウカイニンジャたちから高いソンケイを勝ち取るだろう。\n**このPCの【ジツ】値が１上昇し、【名声：ソウカイヤ】が＋３される。また『NINJA SLAYER RPGプラグイン：ウェイ・オブ・ザ・リアルニンジャ』の表を使い、憑依ニンジャソウルの格と種類を鑑定すること（プラグインを導入しない場合、およびすでにこの結果を一度得ている場合は無視する）。**"
+rands = [
+]
+
 # SSOUL：双 S 暗骰（SOUL 表）
 [[ test ]]
 game_system = "NinjaSlayerEx"
@@ -1702,6 +1718,33 @@ rands = [
 [[ test ]]
 game_system = "NinjaSlayerEx"
 input = "SOUL@7"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：CYBER_A@1 不响应
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "CYBER_A@1"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：CYBER_B@1 不响应
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "CYBER_B@1"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SUMMON_A@1 不响应
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SUMMON_A@1"
 output = ""
 rands = [
   { sides = 6, value = 1 },

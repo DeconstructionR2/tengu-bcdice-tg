@@ -395,6 +395,56 @@ class TestLedgerConsistency < Test::Unit::TestCase
     end
   end
 
+  # ==========================================================================
+  # ⑨ **yml 正文逐字保真**（kimi T1.7 评审翻车点 1 —— 测试网的真实盲区）
+  #
+  # 为什么必须常驻化：toml 的 `output` 是从 **yml** 真实 eval 采集的，
+  # ledger 只登记**结构**（条目数 / dice / min_index / datarange）不存正文。
+  # → 若 i18n/NinjaSlayerEx/ja_jp.yml 某一条 items 抄错天狗原文一个字，
+  #   三方交叉校验全绿、全部 toml 用例全绿、rake full 全绿，
+  #   而玩家看到的是**错的规则文本**。这是本批最隐蔽的失败面。
+  #
+  # 数据源：references/extracted/tengu_tables.json
+  #         ← node scripts/extract_tengu_data.mjs 直接 require 钉版天狗 JS 导出
+  #   （「让 JS 引擎自己解析」而非正则切 template literal，T1.2 定的两棒管线）。
+  # 比对时必须走与生成器**同一个** rewrite_items（声明式改写），
+  # 否则命中改写的表会被判「不一致」——这是 T1.5 修过的同型坑。
+  # ==========================================================================
+  def test_edition1_yml_items_verbatim_match_tengu_source
+    json = JSON.parse(File.read(File.join(ROOT, "references/extracted/tengu_tables.json"), encoding: "UTF-8"))
+    key_to_ja = {
+      "WS" => "wasshoiエントリー_1",
+      "JITSB" => "ジツ拡張サイバネ暴走_1",
+      "DKKI" => "暗黒カラテ衝動_1",
+      "KRM" => "カルマロンダリング_1",
+      "CYBER" => "サイバネ狂気判定_1",
+      "BIOCYBER" => "バイオサイバネ狂気判定_1",
+      "SOUL" => "ソウル鑑定_1",
+      "SUMMON" => "ソーマトリコール_1",
+      "BK" => "生い立ち_1"
+    }
+
+    EDITION1_KEYS.each do |key|
+      ja = key_to_ja.fetch(key)
+      src = json.fetch("tables").fetch(ja)
+      got = I18n.t("NinjaSlayerEx.table.#{key}.items", locale: :ja_jp, raise: true)
+      want = src["items"].map { |s| rewrite_text(s) }
+
+      assert_equal(src["items"].size, got.size, "#{key}（#{ja}）条目数与天狗源不符")
+      want.each_with_index do |w, i|
+        next if got[i] == w
+
+        flunk("#{key}（#{ja}）第 #{i + 1} 项正文与天狗源**不一致**——" \
+              "这是抄写/改写漂移，不是显示差异（源 #{w[0, 40].inspect} vs yml #{got[i].to_s[0, 40].inspect}）")
+      end
+
+      # name 也逐字核对（表名 + 骰型标记）
+      assert_equal("#{ja}(#{src['dice']['a'] || src['dice'].values.first}) ＞ ".sub(/(\d+d\d+)/i) { |m| m.upcase },
+                   I18n.t("NinjaSlayerEx.table.#{key}.name", locale: :ja_jp, raise: true),
+                   "#{key} 的 yml name 与天狗原表名/骰型标记不一致")
+    end
+  end
+
   # 天狗骰型字面量 → 归一化的 "<times>d<sides>[+<bonus>]"（与 gen_table_toml 同解）。
   def normalize_1_dice_expr(raw)
     s = raw.to_s.downcase.gsub("+x", "").strip

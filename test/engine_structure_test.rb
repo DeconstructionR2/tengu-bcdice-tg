@@ -391,6 +391,27 @@ class TestEngineStructure < Test::Unit::TestCase
     end
   end
 
+  # **刻意差异：`\A` vs 父类的 `^`**（kimi T1.7 评审事实 #3，改为可执行断言）。
+  #
+  # 父类用行锚 `^` → `"X\nSB"` 在原生 pattern 下也匹配（第二行）；
+  # 本覆写用串首锚 `\A` → 不匹配。这是**刻意**的（BCDice 命令面语义是整串匹配），
+  # 且**经 eval 不可达**（Preprocessor 先在首个空白处截断）。
+  #
+  # 把这个「已知差异」写成断言，是为了让日后有人发现它时第一反应是
+  # 「哦，这是登记过的取舍」而不是「覆写引入了未知分叉」。
+  def test_edition1_uses_string_anchor_not_line_anchor
+    multiline = "X\nSB"
+
+    assert_nil(EX1.prefixes_pattern.match(multiline),
+               "1版 覆写用 \\A（串首锚），多行输入的第二行不应被匹配")
+    assert_not_nil(PARENT1.prefixes_pattern.match(multiline),
+                   "父类用的是 ^（行锚）；若上游改锚点，这条会红——\\A 与之的差异需重评")
+
+    # 差异在端到端不可达：Preprocessor 先截断到首个空白
+    inst = EX1.new(multiline)
+    assert_nil(inst.eval, "多行输入经 Preprocessor 截断后不应响应（两边一致的失败路径）")
+  end
+
   # 引擎原生 pattern（1版，未加任何覆写）的参照物。
   def native_edition1_pattern
     Regexp.new("^(S)?(#{EX1.prefixes.join('|')})", Regexp::IGNORECASE)
