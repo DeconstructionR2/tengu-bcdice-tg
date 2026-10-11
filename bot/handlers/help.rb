@@ -28,6 +28,9 @@ module TelegramBot
         /bank item add|del <道具名> — 存取道具
         /bank balance — 查账；/bank statement — 出结算并清零；/bank reset — 清零
         /ct — 自定义表：建表 /ct create、掷表 /ct roll <表名>（详解 /ct help）
+        /log new <名> — 开始录制本群/话题的跑团 log（含 bot 掷骰结果）
+        /log off — 暂停录制；/log on — 继续录制；/log end — 结束并导出 txt+json 到本群
+        /log list — 查看本群/话题的录制列表；/log help — 详解
         /help — 本帮助
 
         裸打也能掷骰（整条消息都是骰式才触发，闲聊不响应）：
@@ -43,7 +46,12 @@ module TelegramBot
       end
     end
 
-    # 菜单已上架、T3.x 才实现的命令：一句话占位（**不含**「静默」误导）。
+    # 菜单已上架、尚未实现的命令：一句话占位（**不含**「静默」误导）。
+    #
+    # T3.5 起菜单十条命令全部有真 handler（/log 是最后一个换掉的），本类
+    # **当前无生产使用者**——保留它是为将来「先上菜单、后补实现」的命令留
+    # 候车位（真机验收教训：菜单里有的命令没 handler = 用户视角 bot 死了；
+    # 该场景还会再现）。不要因为「没人用」删掉它：删了下次只能重写。
     class PendingHandler
       def initialize(feature:)
         @feature = feature

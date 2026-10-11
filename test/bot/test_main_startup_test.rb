@@ -41,7 +41,7 @@ class TestMainStartup < Minitest::Test
   # 把整个类（含 commands_payload/MainMenu 之外的类方法）抽走，测的是
   # 替身不是真代码。prepend 只覆盖三个点（初始化/长轮询/gem 后端），
   # 其余代码路径（MainMenu、Chunker、Router、handlers、DB）全是真的。
-  def shim_source(db_path)
+  def shim_source(db_path, logging_enabled: "1")
     <<~RUBY
       $LOAD_PATH.unshift(#{File.join(REPO, "lib").inspect})
       require "telegram/bot"
@@ -60,6 +60,7 @@ class TestMainStartup < Minitest::Test
       $SLEPT = []
       $UPDATES = []
       $SET_COMMANDS = nil
+      $DOCUMENTS = []
       $SENT_OUT = #{File.join(File.dirname(db_path), "sent.json").inspect}
 
       # 假 gem 后端：只记录，不联网
@@ -72,6 +73,18 @@ class TestMainStartup < Minitest::Test
         # 各 status 的分支由 test/bot/test_admin_test.rb 逐条覆盖。
         def self.get_chat_member(chat_id:, user_id:)
           Struct.new(:status).new("administrator")
+        end
+        # T3.5：log 导出的 document 通道。内容在**调用那一刻**读（handler 发完
+        # 即删临时目录），转成 UTF-8 以便 JSON.dump（rb 读取默认 ASCII-8BIT）。
+        def self.send_document(**params)
+          $DOCUMENTS << {
+            "chat_id" => params[:chat_id],
+            "thread_id" => params[:message_thread_id],
+            "filename" => params[:filename],
+            "caption" => params[:caption],
+            "content" => params[:document].read.force_encoding("UTF-8")
+          }
+          :ok
         end
       end
       class FakeClient; def api; FakeGemBackend; end; end
@@ -95,10 +108,12 @@ class TestMainStartup < Minitest::Test
       ENV["TELEGRAM_ENV_FILE"] = "/nonexistent-t2.4.env"
       ENV["TELEGRAM_BOT_TOKEN"] = "1234567890:FakeTokenForUnitTests0000"
       ENV["DB_PATH"] = #{db_path.inspect}
+      ENV["LOGGING_ENABLED"] = #{logging_enabled.inspect}
 
       load #{File.join(REPO, "bot/main.rb").inspect}
 
-      File.write($SENT_OUT, JSON.dump("sent" => $SENT, "set_commands" => !!$SET_COMMANDS))
+      File.write($SENT_OUT, JSON.dump("sent" => $SENT, "documents" => $DOCUMENTS,
+                                      "set_commands" => !!$SET_COMMANDS))
     RUBY
   end
 
@@ -416,6 +431,145 @@ class TestMainStartup < Minitest::Test
       )
       conn.close
       assert_equal [["接线表", "2d6"]], rows, "自定义表应落库（含改后的骰型）"
+    end
+  end
+
+  # T3.5 的接线闭环：**经 bot/main.rb 的真实接线**跑一遍跑团 log 全流程。
+  # 验的是「/log 有真 handler、录制挂钩真的挂在 router 上、导出文件真的发回
+  # 原作用域」（语义由 test_session_log_* 负责）。
+  def test_startup_wires_session_log_end_to_end
+    Dir.mktmpdir("tengu-t3.5-main") do |dir|
+      db_path = File.join(dir, "tengu.db")
+      chat_id = -1_000_000_000_123_456_789
+
+      def update_src(n, text, chat_id, thread_id: nil)
+        <<~RUBY.strip
+          Telegram::Bot::Types::Update.new(update_id: #{n}, message: Telegram::Bot::Types::Message.new(
+            message_id: #{n}, date: 1_700_000_000,
+            chat: { id: #{chat_id}, type: "supergroup" },
+            from: { id: 1, is_bot: false, first_name: "T" }, text: "#{text}"#{thread_id ? ", message_thread_id: #{thread_id}" : ""}))
+        RUBY
+      end
+
+      updates = [
+        update_src(1, "/log new 接线跑团", chat_id, thread_id: 88),
+        update_src(2, "闲聊消息", chat_id, thread_id: 88),
+        update_src(3, "/roll SB", chat_id, thread_id: 88),
+        update_src(4, "/log end", chat_id, thread_id: 88)
+      ].join(",\n")
+
+      shim = File.join(dir, "shim_log.rb")
+      File.write(shim, shim_source(db_path).sub("$UPDATES = []", "$UPDATES = [\n#{updates}\n]"))
+
+      sent_file = File.join(dir, "sent.json")
+      out = IO.popen(
+        { "BUNDLE_GEMFILE" => File.join(REPO, "Gemfile") },
+        ["bundle", "exec", "ruby", shim],
+        err: %i[child out],
+        chdir: REPO
+      ) { |io| io.read }
+
+      assert File.exist?(sent_file), "子进程应写出记录（实际输出：#{out[0, 600]}）"
+      payload = JSON.parse(File.read(sent_file))
+      sent = payload.fetch("sent")
+      texts = sent.map { |m| m["text"] }
+
+      # /log new 回执 + /roll SB 结果 + /log end 回执；闲聊不回复（3 条 text）
+      assert_equal 3, texts.size, "应发 3 条文本：#{texts.inspect}"
+      assert_includes texts[0], "已开始录制", "/log new 应有群内明示"
+      assert_includes texts[1], "サツバツ", "/roll 真引擎结果应回发"
+      assert_includes texts[2], "已结束录制", "/log end 应答"
+      assert_equal 88, sent[1]["message_thread_id"], "thread 逐条透传"
+      assert_includes out, "[T3.5]", "启动日志应打出 T3.5 接线行"
+      assert_includes out, "session_log.rb", "启动日志应列出 /log handler"
+      refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
+
+      # 导出文件：两个 document，发回原群/原话题
+      docs = payload.fetch("documents")
+      assert_equal 2, docs.size, "应收到 txt + json 两个导出：#{docs.map { |d| d['filename'] }.inspect}"
+      txt = docs.find { |d| d["filename"].to_s.end_with?(".txt") }
+      json_doc = docs.find { |d| d["filename"].to_s.end_with?(".json") }
+      refute_nil txt
+      refute_nil json_doc
+      assert_equal chat_id, txt["chat_id"]
+      assert_equal 88, txt["thread_id"], "导出文件发回原话题（thread 透传）"
+      assert_equal 88, json_doc["thread_id"]
+      assert_includes txt["content"], "闲聊消息", "闲聊（非命令消息）必须在录制里"
+      assert_includes txt["content"], "/log end"
+
+      payload_json = JSON.parse(json_doc["content"])
+      assert_equal "接线跑团", payload_json["log"]["name"]
+      assert_equal "ended", payload_json["log"]["status"]
+      assert_equal 5, payload_json["entries"].size, "回执+闲聊+命令+结果+结束命令"
+      assert_equal [true, false, false, true, false],
+                   payload_json["entries"].map { |e| e["is_bot"] },
+                   "bot 抛骰结果/回执 is_bot=true，人类消息 false"
+
+      # 落库：三张表都要对
+      require "sqlite3"
+      conn = SQLite3::Database.new(db_path)
+      rows = conn.execute("SELECT seq, is_bot, content FROM log_entries ORDER BY seq")
+      logs = conn.execute("SELECT status, name FROM session_logs")
+      conn.close
+      assert_equal [1, 2, 3, 4, 5], rows.map(&:first), "seq 逐条递增"
+      assert_includes rows[1][2], "闲聊消息", "闲聊落盘（此前是静默丢弃）"
+      assert_equal [["ended", "接线跑团"]], logs, "录制记录状态机走完（ended）"
+    end
+  end
+
+  # T3.5 的 LOGGING_ENABLED=0 短路：全链路——/log 一律「未启用」，
+  # 录制路径零 DB 触碰（表里一行都不许有）。
+  def test_startup_with_logging_disabled_short_circuits
+    Dir.mktmpdir("tengu-t3.5-off") do |dir|
+      db_path = File.join(dir, "tengu.db")
+      chat_id = -1_000_000_000_123_456_789
+
+      def update_src(n, text, chat_id)
+        <<~RUBY.strip
+          Telegram::Bot::Types::Update.new(update_id: #{n}, message: Telegram::Bot::Types::Message.new(
+            message_id: #{n}, date: 1_700_000_000,
+            chat: { id: #{chat_id}, type: "supergroup" },
+            from: { id: 1, is_bot: false, first_name: "T" }, text: "#{text}"))
+        RUBY
+      end
+
+      updates = [
+        update_src(1, "/log new 试试", chat_id),
+        update_src(2, "闲聊消息", chat_id),
+        update_src(3, "/log list", chat_id)
+      ].join(",\n")
+
+      shim = File.join(dir, "shim_log_off.rb")
+      File.write(shim, shim_source(db_path, logging_enabled: "0")
+        .sub("$UPDATES = []", "$UPDATES = [\n#{updates}\n]"))
+
+      sent_file = File.join(dir, "sent.json")
+      out = IO.popen(
+        { "BUNDLE_GEMFILE" => File.join(REPO, "Gemfile") },
+        ["bundle", "exec", "ruby", shim],
+        err: %i[child out],
+        chdir: REPO
+      ) { |io| io.read }
+
+      assert File.exist?(sent_file), "子进程应写出记录（实际输出：#{out[0, 600]}）"
+      payload = JSON.parse(File.read(sent_file))
+      texts = payload.fetch("sent").map { |m| m["text"] }
+
+      assert_equal 2, texts.size, "三条里两条命令应答、闲聊静默：#{texts.inspect}"
+      texts.each do |t|
+        assert_includes t, "未启用", "LOGGING_ENABLED=0 时 /log 各子命令回「未启用」"
+      end
+      assert_empty payload.fetch("documents"), "未启用时不该导出任何文件"
+      assert_includes out, "LOGGING_ENABLED=0", "启动日志应反映开关状态"
+      refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
+
+      require "sqlite3"
+      conn = SQLite3::Database.new(db_path)
+      log_count = conn.get_first_value("SELECT count(*) FROM session_logs")
+      entry_count = conn.get_first_value("SELECT count(*) FROM log_entries")
+      conn.close
+      assert_equal 0, log_count, "未启用时 /log new 不许建行"
+      assert_equal 0, entry_count, "未启用时录制路径一次 DB 都不碰"
     end
   end
 end

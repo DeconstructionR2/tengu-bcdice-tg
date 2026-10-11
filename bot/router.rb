@@ -40,7 +40,20 @@ require "logger"
 #   - **迁移消息走注入的 migration handler**（T2.5：bot/migration.rb 做事务性
 #     re-key；本层零 DB 依赖，只负责**不把它当普通消息处理** + 异常兜底）。
 #   - **router 不写 DB、不联网**：发送只经注入的 TelegramApi，测试全 mock。
+#     T3.5 的 log 录制**不破这条**——挂钩只调注入的 `session_log` 对象
+#     （bot/session_log_recorder.rb，默认 nil = 不录），DB 全在那个对象里。
 #   - **错误兜底**：handler 抛异常 → warn（只记结构性信息，不含用户正文）后继续。
+#
+# ── 录制挂钩（T3.5，计划 §13 第 6 项定案 / §12 R8）────────────────────
+#   两处集中点（各自唯一）：
+#     ① dispatch 取到 chat/thread 之后、`text.nil?` 早退**之前**——文本消息
+#        （含不命中任何轨的闲聊，此前是静默丢弃）与非文本占位都在这里进录制；
+#     ② run_handler 的「返回 String → 代发」分支——bot 自己的掷骰结果/应答
+#        同点落盘（is_bot=1）。
+#   暗骰边界（防泄纪律 > 录制完整度）：/secret 命令消息在此显式排除
+#   （ephemeral 命令群内不可见，录进去=元信息泄漏）；暗骰**结果**从不经过
+#   本层（SecretDiceHandler 恒返回 nil、自走 ephemeral）——结构性保证。
+#   录制故障（异常）只 warn 不杀消息处理；未注入 session_log 时零行为变化。
 # ============================================================================
 
 require_relative "telegram_api"
@@ -253,7 +266,7 @@ module TelegramBot
       MainMenu::ENTRIES.map { |e| e[:command].to_s }
     end
 
-    attr_reader :api, :aux_enabled, :handlers, :aux_pattern, :migration
+    attr_reader :api, :aux_enabled, :handlers, :aux_pattern, :migration, :session_log
     attr_accessor :bot_username
 
     # @param api [TelegramBot::TelegramApi] 发送通道（注入；router 自己不联网）
@@ -273,6 +286,12 @@ module TelegramBot
     #   注入的 api（@api.answer_callback_query）。**必须有**：不答则用户客户端
     #   一直转圈（计划 §8 T3.1 前置注记），而本层拿不到别的兜底通道。
     # @param logger [#warn] 日志器（只记结构性信息）
+    # @param session_log [#record_incoming/#record_bot_output, nil] 跑团 log 录制
+    #   挂钩（T3.5）。签名：
+    #     `record_incoming(message:, chat_id:, thread_id:)`
+    #     `record_bot_output(chat_id:, thread_id:, text:)`
+    #   nil = 不录制（默认；单测与未启用 LOGGING_ENABLED 的部署都走这条）。
+    #   实现见 bot/session_log_recorder.rb；本层只调用、不关心其内部。
     def initialize(api:,
                    handlers: {},
                    aux_enabled: nil,
@@ -280,6 +299,7 @@ module TelegramBot
                    aux_systems: nil,
                    migration: nil,
                    answer_callback: nil,
+                   session_log: nil,
                    logger: ::Logger.new($stderr))
       @api = api
       @handlers = handlers.dup
@@ -289,6 +309,7 @@ module TelegramBot
       @aux_systems = aux_systems
       @migration = migration
       @answer_callback = answer_callback || method(:default_answer_callback)
+      @session_log = session_log
       @aux_pattern = AuxMatcher.build_pattern(aux_systems || self.class.default_systems)
     end
 
@@ -369,6 +390,13 @@ module TelegramBot
       chat_id = chat.id.to_i
       thread_id = message.message_thread_id&.to_i
       text = message.text
+
+      # --- 录制挂钩 ①（T3.5）：本作用域在录时，全部文本消息与非文本占位都落 log ---
+      # 位置是本任务的关键：在 `text.nil?` 早退**之前**（否则非文本与静默闲聊
+      # 永远到不了这里）、又在迁移消息分流**之后**（服务消息不录）。
+      # 未命中任何轨的闲聊也从这里进录制——这正是「此前静默丢弃」的补齐点。
+      record_incoming(message, chat_id: chat_id, thread_id: thread_id)
+
       return nil if text.nil? || text.empty?
 
       # --- 主轨 slash ---
@@ -593,6 +621,10 @@ module TelegramBot
       # handler 直接返回文本 → 由 router 代发（带 thread 透传）
       if result.is_a?(String) && !result.empty?
         send(chat_id, result, thread_id: thread_id)
+        # --- 录制挂钩 ②（T3.5）：bot 自己的输出（掷骰结果/命令应答）同点落盘 ---
+        # is_bot=1。暗骰结果**结构性**到不了这里：SecretDiceHandler 恒返回 nil、
+        # 自走 ephemeral（见该文件纪律 1）——不靠本层 if 判断兜底。
+        record_bot_output(chat_id: chat_id, thread_id: thread_id, text: result)
       end
 
       result
@@ -734,6 +766,51 @@ module TelegramBot
     # 未知不等于豁免。chat 不认 type（测试假身）时同样 nil。
     def chat_type_of(chat)
       chat.respond_to?(:type) ? chat.type&.to_s : nil
+    end
+
+    # ------------------------------------------------------------------
+    # 录制挂钩的实现（T3.5；见文件头「录制挂钩」一节）
+    # ------------------------------------------------------------------
+
+    # 一条入站消息进录制（未注入 session_log 时零开销直落）。
+    #
+    # **/secret 命令消息不录**（实现级决策，见 docs/t3.5-report.md §4）：
+    # Bot API 10.3 的 is_ephemeral 命令**群内不可见**——录进 log 等于把
+    # 「某人刚做了暗骰、用的哪条骰式」写进导出文件（防泄纪律 > 录制完整度，R8）。
+    # 其余 slash 命令（/log 自己、/bank、/roll…）都是群内可见消息 → 照录。
+    # 暗骰的**结果文本**另有结构性保证：SecretDiceHandler 恒返回 nil，
+    # 不经过 run_handler 的代发分支（挂钩 ② 对它天然不可达）。
+    def record_incoming(message, chat_id:, thread_id:)
+      return nil if @session_log.nil?
+      return nil if secret_command_text?(message)
+
+      @session_log.record_incoming(message: message, chat_id: chat_id, thread_id: thread_id)
+    rescue StandardError => e
+      # 录制故障绝不影响消息处理（掷骰/查账照常）：只记结构性信息
+      warn_line("[router] log 录制失败（入站消息，已忽略）：#{e.class}")
+      nil
+    end
+
+    # bot 代发的一条输出进录制（is_bot=1；文本即代发原文，逐字落盘）
+    def record_bot_output(chat_id:, thread_id:, text:)
+      return nil if @session_log.nil?
+
+      @session_log.record_bot_output(chat_id: chat_id, thread_id: thread_id, text: text)
+    rescue StandardError => e
+      warn_line("[router] log 录制失败（bot 输出，已忽略）：#{e.class}")
+      nil
+    end
+
+    # 消息文本是不是 /secret 命令（含 `/secret@本bot` 变体；命令名按
+    # **大小写不敏感**排除——宁多排不漏排：群内不可见的东西录进 log 是泄漏，
+    # 可见的漏录最多是少一条记录）。
+    def secret_command_text?(message)
+      text = message.respond_to?(:text) ? message.text : nil
+      body = text.to_s
+      return false unless body.start_with?("/")
+
+      head = body[1..].to_s.split(/[\s@]+/, 2).first.to_s
+      head.downcase == "secret"
     end
 
     private

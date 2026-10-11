@@ -464,9 +464,8 @@ class TestDiceHandlerRouting < Minitest::Test
 
   # 本 Router 只注册了 DiceHandler.registry（roll/nd/system/aux）。
   # 名单只留「**在本注册表里没有 handler**」的命令 —— /secret、/bank、/settings、
-  # /help 自 T3.1/T3.2 起都有真 handler（挂在 main.rb 的完整注册表上），
-  # 把它们列进来会让本用例的语义随版本漂移、且名不副实。
-  # /ct、/log 仍是 PendingHandler 占位（挂不挂都静默），故这里也放行。
+  # /help 自 T3.1/T3.2 起都有真 handler、/ct（T3.4）与 /log（T3.5）在 main.rb 的
+  # 完整注册表里也有真身（本用例的字面注册表里没有），故这里一并放行。
   def test_unregistered_commands_stay_silent
     %w[/secret SB2 /bank /ct /log /settings /help].each do |text|
       @router.dispatch(update(text: text))

@@ -270,6 +270,11 @@ module TelegramBot
     #     TypeError，而 File/Tempfile 被按路径重开，丢掉了 fd 语义
     #     （已关闭/已 rewind 到别处的 fd 会被静默重读错内容）。
     #   - 其他对象 → 交给 gem（它只 jsonify Hash/Array，其余原样传）。
+    #
+    # filename 透传（T3.5 修复）：形参此前存在但从未进 params——Telegram 在
+    # 未给 filename 时按上传文件名的 basename 取名，于是「临时路径的随机名」
+    # 会原样出现在用户看到的文件上。T3.5 的 log 导出显式传 filename 保住
+    # `tengu-log-<id>.txt/json`；此处把这层透传补齐（发送侧文件名的唯一真相）。
     def send_document(chat_id, file, thread_id: nil, caption: nil, filename: nil)
       @rate_limiter.wait(chat_id)
 
@@ -278,6 +283,7 @@ module TelegramBot
       params = { chat_id: chat_id, document: document }
       params[:caption] = caption if caption
       params[:message_thread_id] = thread_id if thread_id
+      params[:filename] = filename if filename
       params[:parse_mode] = @parse_mode if @parse_mode
 
       begin

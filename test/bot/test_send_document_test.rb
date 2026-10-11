@@ -195,6 +195,26 @@ class TestSendDocument < Minitest::Test
     end
   end
 
+  # T3.5 修复：filename 形参此前从未进 params（临时路径的随机名会原样上 wire）
+  def test_filename_is_forwarded_when_given
+    with_tmp("y", "random-temp-name.txt") do |path|
+      api, fake, = build_doc_api
+      api.send_document(77, path, filename: "tengu-log-3.txt")
+
+      assert_equal "tengu-log-3.txt", fake.calls.fetch(0)[:params][:filename]
+    end
+  end
+
+  def test_filename_is_omitted_when_not_given
+    with_tmp("y", "log3b.txt") do |path|
+      api, fake, = build_doc_api
+      api.send_document(77, path)
+
+      refute fake.calls.fetch(0)[:params].key?(:filename),
+             "不给 filename 时不许多塞参数（Telegram 用上传名兜底）"
+    end
+  end
+
   def test_parse_mode_is_configurable
     with_tmp("y", "log5.txt") do |path|
       api, fake, = build_doc_api(parse_mode: "Markdown")

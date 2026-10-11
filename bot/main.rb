@@ -5,20 +5,29 @@
 #              / T2.6 挂 /settings + 管理员助手 + 辅助轨开关持久化
 #              / T3.1 挂暗骰 /secret + 按钮回调路由
 #              / T3.2 挂天狗银行 /bank
-#              / T3.4 挂自定义表 /ct）
+#              / T3.4 挂自定义表 /ct
+#              / T3.5 挂跑团 log /log + 录制挂钩）
 #
 # 本文件保证 `bundle exec ruby bot/main.rb` 能起：
 #   1. 加载引擎（lib/engine_bootstrap.rb —— 与测试/spike 共用同一初始化序列）；
 #   2. 解析 token（bot/config.rb，绝不打印值）；
 #   3. 建 TelegramApi，setMyCommands 注册主轨菜单；
-#   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支）并挂 handler；
+#   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支 + log 录制挂钩）
+#      并挂 handler；
 #   5. 起长轮询。
 #
-# 已挂的 handler（T3.4 起）：
-#   /start /help /settings /roll /nd /system /secret /bank /ct + 辅助轨（裸 ASCII）
-#   + **:callback_query**（暗骰「公开」按钮）
-#   **尚无真 handler**（temp 占位 PendingHandler：一句话应答，不静默）：
-#   log（T3.5 换成真 handler）
+# 已挂的 handler（T3.5 起 —— 菜单十条命令**全部**有真 handler）：
+#   /start /help /settings /roll /nd /system /secret /bank /ct /log
+#   + 辅助轨（裸 ASCII）+ **:callback_query**（暗骰「公开」按钮）
+#   + log 录制挂钩（router 的 session_log: 注入，bot/session_log_recorder.rb）
+#
+# T3.5 范围纪律（跑团 log 录制，计划 §13 第 6 项 / §12 R8）：
+#   - **主开关 LOGGING_ENABLED**（.env，Config.logging_enabled?）同时传给
+#     handler（未启用 → /log 各子命令统一应答「未启用」）与 recorder
+#     （未启用 → 一次 DB 都不碰，全链路短路）。不要只传一处。
+#   - recorder 与 handler **共用同一个 Connection**（单连接纪律，§3 决9）
+#     与同一个 TenguDB::SessionLogs 工厂；bot_name 给导出里的 bot 条目显示名。
+#   - 录制挂钩挂在 router（dispatch 集中点）；本文件只做接线，不碰录制逻辑。
 #
 # T3.1 范围纪律（暗骰）：
 #   - Secrets 落库走 **写入时惰性 TTL 清理**（7 天），**不建定时任务**——
@@ -63,6 +72,8 @@ require_relative "handlers/help"
 require_relative "handlers/secret_dice"
 require_relative "handlers/bank"
 require_relative "handlers/custom_table"
+require_relative "handlers/session_log"
+require_relative "session_log_recorder"
 require_relative "migration"
 require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
@@ -113,16 +124,23 @@ bot_username =
     nil
   end
 
+# 跑团 log 录制的主开关（.env LOGGING_ENABLED）。**只在这里读一次**，
+# 同时传给下面的 handler（/log 未启用应答）与 recorder（全链路短路）——
+# 两处各自读 env 会漂移。启动日志行也要用它，故在 puts 之前就取好。
+logging_enabled = TelegramBot::Config.logging_enabled?
+
 puts "[T3.1] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
 puts "[T3.1] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
 puts "[T3.1] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支"
-puts "[T3.4] 已挂 handler：/start /help /settings /roll /nd /system /secret(暗骰) /bank(天狗银行) /ct(自定义表) + 辅助轨" \
-     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb + handlers/secret_dice.rb + handlers/bank.rb + handlers/custom_table.rb）；log 占位应答待 T3.5"
+puts "[T3.5] 已挂 handler：/start /help /settings /roll /nd /system /secret(暗骰) /bank(天狗银行) /ct(自定义表) /log(跑团 log)" \
+     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb + handlers/secret_dice.rb + handlers/bank.rb + handlers/custom_table.rb + handlers/session_log.rb）；菜单十条命令全部有真身"
 puts "[T3.2] 天狗银行：bank_record 按 (chat_id, thread_id) 话题级一本账；流水/道具为 JSON 数组（元素级删道具）" \
      "；余额可为负（忠实保留天狗无透支校验）；893 彩蛋照搬天狗 change893（金额串含 893 即小怪装饰）"
 puts "[T3.4] 自定义表：custom_tables 群级一表一行（话题共享）；改表权限=权限名单或本群管理员（getChatMember fail-closed）" \
      "；查找顺序 内置(i18n 桥)→本群→公共；范围钳自动维护，掷表超钳取端点并明示"
 puts "[T3.1] 暗骰：结果落 secrets 表（TTL 7 天惰性清理），「公开」按钮 = callback 分支 + 本人校验 + 公开后删行"
+puts "[T3.5] 跑团 log：/log new|off|on|end|list，话题级录制（文本+非文本占位+bot 掷骰结果），导出 txt+json 发回原作用域；" \
+     "暗骰命令消息与 ephemeral 结果均不落盘；LOGGING_ENABLED=#{logging_enabled ? 1 : 0}（=0 时 /log 一律应答「未启用」且录制路径零 DB 触碰）"
 puts "[T2.6] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
 puts "[T2.6] 管理员助手已挂（bot/admin.rb，getChatMember；查询失败 fail-closed）"
 
@@ -183,19 +201,37 @@ custom_table_handler = TelegramBot::Handlers::CustomTableHandler.new(
   admin: admin
 )
 
+# T3.5：跑团 log 录制。主开关（.env LOGGING_ENABLED）**同时**传给 handler
+# 与 recorder——handler 管「/log 各子命令的未启用应答」，recorder 管「一次
+# DB 都不碰的全链路短路」。两处同源（启动时读取的 logging_enabled），不要各自读 env。
+# bot_name：导出里 bot 条目的显示名（get_me 的 username，取不到退化为固定名）。
+session_logs_store = TenguDB::SessionLogs.new(dice_db)
+session_log_handler = TelegramBot::Handlers::SessionLogHandler.new(
+  session_logs: session_logs_store, enabled: logging_enabled
+)
+session_log_recorder = TelegramBot::SessionLogRecorder.new(
+  session_logs: session_logs_store, enabled: logging_enabled,
+  bot_name: bot_username || "骰子bot"
+)
+
 router = TelegramBot::Router.new(
   api: api,
   handlers: { start: TelegramBot::StartHandler.new,
-              # /help 与「菜单已上架、T3.x 才实现」的占位应答（真机验收教训：
+              # /help 与「菜单已上架、尚未实现」的占位应答模式（真机验收教训：
               # 菜单里有的命令没 handler = 用户视角「bot 死了」；菜单外的
-              # 未知 slash 仍一律静默）。/ct 已由 T3.4 换成真 handler。
+              # 未知 slash 仍一律静默）。/log 已由 T3.5 换成真 handler——
+              # 至此菜单十条命令全部有真身，PendingHandler 暂无用武之位。
               help: TelegramBot::Handlers::HelpHandler.new,
-              log: TelegramBot::Handlers::PendingHandler.new(feature: "跑团 log /log") }
+              log: session_log_handler }
                 .merge(TelegramBot::Handlers::DiceHandler.registry(dice))
                 .merge(TelegramBot::Handlers::SecretDiceHandler.registry(secret_dice))
                 .merge(TelegramBot::Handlers::SettingsHandler.registry(settings_handler))
                 .merge(TelegramBot::Handlers::BankHandler.registry(bank_handler))
                 .merge(TelegramBot::Handlers::CustomTableHandler.registry(custom_table_handler)),
+  # T3.5：录制挂钩（router 只调注入的对象；DB 在 recorder 里）。
+  # LOGGING_ENABLED=0 时这个对象自身短路，注入与否行为等价；恒注入让接线
+  # 只有一条路径（不给「忘了注入」留静默失效面）。
+  session_log: session_log_recorder,
   bot_username: bot_username,
   # 辅助轨开关（T2.6：**已持久化**）。读群级 chat_settings.aux_enabled，
   # 查不到行 = 默认开（db/settings.rb 的 DEFAULT_AUX_ENABLED）。
