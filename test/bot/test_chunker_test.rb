@@ -47,7 +47,7 @@ class TestChunker < Minitest::Test
   end
 
   def test_empty_string
-    # 空文本返回单元素空数组段（发送层可安全处理）
+    # 空文本返回单元素空数组段（切段层语义不变）
     segs = TelegramBot::Chunker.split("")
     assert_equal [""], segs
   end

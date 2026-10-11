@@ -34,15 +34,10 @@ Rake::TestTask.new(:default) do |t|
   t.libs << "test"
   t.libs << "lib"
   t.libs << "."
-  t.test_files = FileList[
-    # 引擎初始化守卫（T2.1）——须先跑：后续用例依赖 bootstrap 已完成
-    "test/engine_bootstrap_test.rb",
-    "test/test_ext_game_system_commands.rb",
-    "test/i18n_guard_test.rb",
-    "test/karmarond_semantics_test.rb",
-    "test/ledger_consistency_test.rb",
-    "test/engine_structure_test.rb",
-  ]
+  # 顶层 glob 自动发现新增引擎测试（杜绝「忘挂名单 = 静默漏跑且 exit 0」）；
+  # spike_*.rb 与 randomizer_mock.rb 非 *_test.rb 形态天然不收；
+  # toml runner（非 _test 命名）显式补挂。
+  t.test_files = FileList["test/*_test.rb", "test/test_ext_game_system_commands.rb"]
   t.warning = false
   t.verbose = false
 end
@@ -52,7 +47,8 @@ Rake::TestTask.new(:bot) do |t|
   t.libs << "test"
   t.libs << "lib"
   t.libs << "."
-  t.test_files = FileList["test/bot/test_*_test.rb"]
+  # glob 覆盖 bot/ 与 db/（test/db/ 已就位，未来 DB 层 minitest 自动被捡）
+  t.test_files = FileList["test/{bot,db}/**/test_*_test.rb"]
   t.warning = false
   t.verbose = false
 end

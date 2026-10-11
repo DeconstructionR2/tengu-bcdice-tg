@@ -103,11 +103,16 @@ class TestMainMenu < Minitest::Test
   # --- 降级路径（gem 缺端点/参数 → raw_api_call）---------------------------
 
   def test_falls_back_to_raw_call_when_gem_rejects
-    api, fake, _sleeper, _clock, http = build_api(raise_on: { set_my_commands: NoMethodError.new("no such method") })
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["setMyCommands"])
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(gem_like),
+                                      sleeper: BotTestHelper::FakeSleeper.new(BotTestHelper::FakeClock.new),
+                                      clock: BotTestHelper::FakeClock.new,
+                                      http_executor: http = BotTestHelper::FakeHttpExecutor.new)
 
     api.register_main_commands
 
-    assert_nil fake.registered_commands, "gem 抛错时不应假装成功"
+    assert_nil gem_like.registered_commands, "gem 抛错时不应假装成功"
     assert_equal 1, http.calls.size, "应降级走一次 raw HTTP"
     assert_match(%r{/setMyCommands\z}, http.last_url)
 
@@ -119,7 +124,13 @@ class TestMainMenu < Minitest::Test
   end
 
   def test_raw_fallback_does_not_leak_token_into_body
-    api, _fake, _sleeper, _clock, http = build_api(raise_on: { set_my_commands: NoMethodError.new("x") })
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["setMyCommands"])
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(gem_like),
+                                      sleeper: BotTestHelper::FakeSleeper.new(BotTestHelper::FakeClock.new),
+                                      clock: BotTestHelper::FakeClock.new,
+                                      http_executor: http)
     api.register_main_commands
 
     # URL 里含 token 是 API 形态决定的，但 body **不得**含 token

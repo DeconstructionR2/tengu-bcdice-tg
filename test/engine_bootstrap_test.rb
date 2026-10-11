@@ -106,6 +106,9 @@ class TestEngineBootstrap < Test::Unit::TestCase
   ].freeze
 
   def test_known_ex_keys_translate_with_raise
+    # 自证：强制 reload，不依赖类内其他测试的执行顺序/共享 backend 状态
+    # （评审实测：漏 reload! 的变异曾被后续测试「治愈」而漏网）
+    EngineBootstrap.bootstrap!(reload_backend: true)
     KNOWN_KEYS.each do |key|
       value = I18n.translate(key, locale: :ja_jp, raise: true)
       assert_kind_of(String, value, "#{key} 应翻译为 String")
@@ -117,6 +120,7 @@ class TestEngineBootstrap < Test::Unit::TestCase
   end
 
   def test_ex_items_arrays_are_reachable
+    EngineBootstrap.bootstrap!(reload_backend: true) # 自证，见上
     # 断言不只是 name：items 是 Array（表结构完整性），且含多字节文本
     items = I18n.translate("NinjaSlayer2Ex.table.NSRS.items", locale: :ja_jp, raise: true)
     assert_kind_of(Array, items, "NSRS.items 应为 Array")
@@ -124,6 +128,7 @@ class TestEngineBootstrap < Test::Unit::TestCase
   end
 
   def test_upstream_keys_still_resolve_after_bootstrap
+    EngineBootstrap.bootstrap!(reload_backend: true) # 自证，见上
     # 注入本仓库 yml 不能遮蔽 gem 内上游表（父类命令仍要能跑）
     upstream = I18n.translate("NinjaSlayer2.table.SATSUBATSU.name", locale: :ja_jp, raise: true)
     assert_kind_of(String, upstream)

@@ -5,7 +5,8 @@
 #
 # 职责（计划 §2 / §6 / §8 T2.1）：
 #   1. 发送封装：4096 字符切段（按字符不按字节）、message_thread_id 透传、
-#      每聊天 ≥1 秒配速、parse_mode 可配置（默认纯文本，§13 第 7 项拍板）；
+#      **每聊天** ≥1 秒配速（key 只含 chat_id，话题不是独立限流桶）、
+#      parse_mode 可配置（默认纯文本，§13 第 7 项拍板）；
 #   2. 长轮询循环封装（包 telegram-bot-ruby 的 Client#listen），
 #      **逐消息错误兜底**——单条消息异常不得杀死循环；
 #   3. 启动时 setMyCommands 注册主轨菜单（§6），/secret 带 is_ephemeral=true；
@@ -25,6 +26,9 @@
 #   且 gem 未收录的方法名（如未来新端点）会 NoMethodError → 走 raw_api_call。
 #   尽管如此，本层仍保留 raw_api_call 作为**保底通道**（R2 缓解措施），
 #   且不依赖该结论：gem 能走就走，不能走自动降级。
+#   降级只在 **NoMethodError 的 receiver 就是 api 本体** 时触发（真·白名单缺失）；
+#   其余 NoMethodError 一律原样抛出（gem 在 POST 之后才做响应类型映射，
+#   误降级重发会造成重复消息，见 gem_endpoint_missing? 的注释）。
 # ============================================================================
 
 require "json"
@@ -54,8 +58,8 @@ module TelegramBot
     # 保留换行：切点落在 "\n" 之后时，换行符归**前**一段，避免产生空行噪声。
     def split(text, limit: MAX_MESSAGE_LENGTH)
       text = text.to_s
+      # 空串在此已被上面一行拦下（[""] 就是正确返回值），后面不再重复判空。
       return [text] if text.length <= limit
-      return [] if text.empty?
 
       segments = []
       current = +""
@@ -158,11 +162,17 @@ module TelegramBot
 
     # 发送长文本：自动 4096 切段，逐段发送。
     #
+    # 空文本**短路**：发空消息会被 Telegram 以 400 拒（"text must be non-empty"），
+    # 且一旦发出就是一条脏消息。这里在发送层拦住（不改动 Chunker.split 的语义——
+    # split("") == [""] 是被单测钉住的行为）。
+    #
     # @param chat_id [Integer, String] 64 位 chat_id 必须整型存（§0.2.4）
     # @param text [String]
     # @param thread_id [Integer, nil] forum 话题 id（message_thread_id 透传，§3 决6）
     # @return [Array<Telegram::Bot::Types::Message, nil>] 每段的返回值
     def send_text(chat_id, text, thread_id: nil, **extra)
+      return [] if text.to_s.empty?
+
       segments = Chunker.split(text)
       segments.map do |segment|
         send_one(chat_id, segment, thread_id: thread_id, **extra)
@@ -172,8 +182,8 @@ module TelegramBot
     # 发送单段（不切段）。thread_id 非 nil 时**每次都透传**——
     # forum 群漏传会把消息发到 General 话题（§3 决6）。
     def send_one(chat_id, text, thread_id: nil, **extra)
-      # 每聊天配速：确保距上次发送 ≥1 秒
-      @rate_limiter.wait("#{chat_id}/#{thread_id || 0}")
+      # 每聊天配速：确保距该聊天上次发送 ≥1 秒（key 只用 chat_id，见 RateLimiter）
+      @rate_limiter.wait(chat_id)
 
       params = { chat_id: chat_id, text: text }.merge(extra)
       params[:parse_mode] = @parse_mode if @parse_mode
@@ -182,7 +192,12 @@ module TelegramBot
       begin
         @api_client.api.send_message(**params)
       rescue NoMethodError => e
-        # gem 白名单缺该端点/参数 → 降级走 raw 通道（§12 R2 保底）
+        # gem 白名单缺该端点 → 降级走 raw 通道（§12 R2 保底）。
+        # 但**只认** receiver 为 api 本体的那个（method_missing → super 抛出）；
+        # 其它 NoMethodError 是我们自己的代码 bug，必须原样抛出，否则
+        # gem 已在 POST 之后才做响应类型映射（api.rb:28-32），重发会造成重复消息。
+        raise unless gem_endpoint_missing?(e)
+
         raw_api_call("sendMessage", params)
       rescue Telegram::Bot::Exceptions::ResponseError => e
         raise SendError, format_send_error(e, params)
@@ -200,21 +215,37 @@ module TelegramBot
     end
 
     # 发送文档（跑团 log 导出，T3.5 用）
+    #
+    # file 三形态的处理（**只认 String 才自己开文件**）：
+    #   - String（路径）→ File.open(file, "rb")，由本方法负责 close；
+    #   - IO / Tempfile  → **原样透传**给 gem/faraday（multipart 直接读 fd）。
+    #     早期实现把 IO 也塞进 File.open：无 to_path 的 IO（IO.pipe 等）会
+    #     TypeError，而 File/Tempfile 被按路径重开，丢掉了 fd 语义
+    #     （已关闭/已 rewind 到别处的 fd 会被静默重读错内容）。
+    #   - 其他对象 → 交给 gem（它只 jsonify Hash/Array，其余原样传）。
     def send_document(chat_id, file, thread_id: nil, caption: nil, filename: nil)
-      @rate_limiter.wait("#{chat_id}/#{thread_id || 0}")
+      @rate_limiter.wait(chat_id)
 
-      io = file.is_a?(String) || file.is_a?(IO) || file.is_a?(Tempfile) ? File.open(file, "rb") : file
-      params = { chat_id: chat_id, document: io }
+      opened = file.is_a?(String) ? File.open(file, "rb") : nil
+      document = opened || file
+      params = { chat_id: chat_id, document: document }
       params[:caption] = caption if caption
       params[:message_thread_id] = thread_id if thread_id
       params[:parse_mode] = @parse_mode if @parse_mode
 
       begin
         @api_client.api.send_document(**params)
-      rescue NoMethodError
-        raw_api_call("sendDocument", params.merge(document: file))
+      rescue NoMethodError => e
+        raise unless gem_endpoint_missing?(e)
+
+        # raw 通道走的是 JSON body，**无法上传文件**（File/IO 塞进去只会得到
+        # 一个坏请求）。与其静默发出必然失败的请求，不如明确报错。
+        raise SendError,
+              "sendDocument 降级失败：raw 通道暂不支持文件上传" \
+              "（multipart 待 T3.5 实现）。gem 报端点缺失：#{e.name.inspect}"
       ensure
-        io.close if io != file && io.respond_to?(:close)
+        # 只 close 本方法自己打开的 IO —— 调用方传进来的 IO 生命周期归调用方
+        opened&.close
       end
     end
 
@@ -267,7 +298,8 @@ module TelegramBot
     # gem 侧走 `set_my_commands`（Api::ENDPOINTS 白名单含 'setMyCommands'，
     # 见 endpoints.rb:96）。BotCommand 支持 is_ephemeral
     # （types/bot_command.rb:9），且 gem 不校验参数 → 直传即可（已离线实证）。
-    # 若 gem 抛 NoMethodError（旧版 gem），降级走 raw_api_call 传纯 JSON 数组。
+    # 仅当 gem 因**白名单缺失**（receiver == api 本体）才降级走 raw_api_call；
+    # 其它 NoMethodError 一律原样抛出（见 gem_endpoint_missing? 的两条理由）。
     def register_main_commands
       commands = MainMenu::ENTRIES.map do |e|
         attrs = { command: e[:command], description: e[:description] }
@@ -277,7 +309,9 @@ module TelegramBot
 
       begin
         @api_client.api.set_my_commands(commands: commands)
-      rescue NoMethodError
+      rescue NoMethodError => e
+        raise unless gem_endpoint_missing?(e)
+
         raw_api_call("setMyCommands", { commands: commands_payload })
       end
     end
@@ -337,6 +371,30 @@ module TelegramBot
 
     private
 
+    # 这个 NoMethodError 是不是"gem 白名单没收录该端点"的信号？
+    #
+    # 判别依据是 **receiver**：`Telegram::Bot::Api#method_missing` 在
+    # `return super unless ENDPOINTS.key?(endpoint)`（api.rb:27）处抛出，
+    # 只有这一条路径 Ruby 才会把 receiver 填成 api 本体。其余任何
+    # NoMethodError（我们自己的代码 bug、gem 响应类型映射阶段炸的）receiver
+    # 都不是 api 本体或压根没有 → 一律**不降级**，原样向上抛。
+    #
+    # 为什么必须这么严（两个真实故障）：
+    #   1. gem 2.8.1 白名单已含 sendMessage/sendDocument/setMyCommands
+    #      （endpoints.rb:14/22/96）→ 生产里这条 rescue 捕获到的大概率是 bug，
+    #      吞掉它只会把故障变成"消息莫名重发"；
+    #   2. gem 的调用顺序是「先 POST，再 ENDPOINTS[endpoint].call(result) 做响应
+    #      类型映射」（api.rb:28-32）→ 若在映射阶段炸了却降级重发，
+    #      **消息已经发出去了**，用户会收到两条。
+    def gem_endpoint_missing?(err)
+      receiver = err.receiver
+      !receiver.nil? && receiver.equal?(@api_client.api)
+    rescue ArgumentError
+      # `NoMethodError.new("msg")` 这类手工构造的异常没有 receiver，
+      # 调 #receiver 会抛 ArgumentError —— 视为「不是白名单缺失」。
+      false
+    end
+
     def default_http_executor(url, body)
       HTTParty.post(url,
                     body: body.to_json,
@@ -362,6 +420,15 @@ module TelegramBot
 
   # --------------------------------------------------------------------------
   # 每聊天配速器（Telegram 限流：每聊天 1 条/秒，§0.2.4）
+  #
+  # key **只按 chat_id**，绝不掺 thread_id：Telegram 的限流口径是「每聊天」，
+  # 话题（forum topic）不是独立的限流桶。早期把 key 拼成 "chat_id/thread_id"
+  # 会让同一群的多个话题各自独立计数，forum 多话题并发时同聊天超速 → 429。
+  #
+  # ⚠️ **尚未实现的限额**：Telegram 对每个 bot 另有「每群 20 条/分钟」的独立
+  # 限额（另见全局 30 msg/s、每分钟 1 万条总量）。本类**只覆盖 1 条/秒的
+  # 最小间隔**，20 条/分钟的滑动窗口**未实现**——连续发送 25 条（每秒 1 条）
+  # 仍会触发 429。该缺口后置到 T2.3 / T3.x 补滑动窗口计数，不要误读为已覆盖。
   # --------------------------------------------------------------------------
   class RateLimiter
     attr_reader :interval

@@ -74,6 +74,12 @@ rescue Telegram::Bot::Exceptions::ResponseError => e
   warn("[T2.1] 常见原因：token 无效/已吊销，或该 token 属于另一个 bot。")
   warn("[T2.1] 请核对 .env 中 #{TelegramBot::Config.token_key} 的值（agent 不打印、不代填）。")
   exit(1)
+rescue StandardError => e
+  # 兜底：网络错误（Faraday）/RawApiError 等不得裸 stack trace 崩出。
+  # 只打印异常类名，**不打印 e.message**（消息体可能夹带敏感串）。
+  warn("[T2.1] 注册主轨菜单失败：#{e.class}（异常消息不打印，防泄漏）。")
+  warn("[T2.1] 常见原因：网络不通/代理问题，或 Telegram API 临时故障；稍后重试。")
+  exit(1)
 end
 
 puts "[T2.1] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"

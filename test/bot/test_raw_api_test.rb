@@ -131,17 +131,21 @@ class TestRawApiCall < Minitest::Test
   # --- gem 端点缺失时的降级 -----------------------------------------------
 
   def test_send_one_falls_back_to_raw_when_gem_lacks_endpoint
-    fake = BotTestHelper::FakeApi.new(raise_on: { send_message: NoMethodError.new("undefined method") })
+    # 用仿 gem 的 api（method_missing → super）而不是裸 NoMethodError：
+    # 只有 method_missing 路径抛出的异常才带 receiver == api 本体，
+    # 而那正是 F3 的降级判别条件（裸 NoMethodError.new(msg) 的 receiver 是 nil）。
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["sendMessage"])
     clock = BotTestHelper::FakeClock.new
     http = BotTestHelper::FakeHttpExecutor.new
     api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
-                                      api_client: BotTestHelper::FakeClient.new(fake),
+                                      api_client: BotTestHelper::FakeClient.new(gem_like),
                                       sleeper: BotTestHelper::FakeSleeper.new(clock),
                                       clock: clock,
                                       http_executor: http)
 
     api.send_text(123, "hi", thread_id: 5)
 
+    assert_empty gem_like.sent_messages, "白名单缺失时 gem 侧不应真的派发成功"
     assert_equal 1, http.calls.size, "gem 端点缺失时应降级走 raw 通道"
     assert_match(%r{/sendMessage\z}, http.last_url)
     assert_equal 5, http.last_body[:message_thread_id], "降级路径也必须透传 thread id"
@@ -164,5 +168,99 @@ class TestRawApiCall < Minitest::Test
     raised = assert_raises(TelegramBot::SendError) { api.send_text(1, "x") }
     assert_match(/chat not found/, raised.message)
     refute_match(/#{Regexp.escape(FAKE_TOKEN)}/, raised.message, "SendError 不得泄漏 token")
+  end
+
+  # --- NoMethodError 降级判别：只有 gem 白名单缺失才降级 ----------------------
+  #
+  # gem 2.8.1 的 ENDPOINTS 已含 sendMessage/sendDocument/setMyCommands
+  # （endpoints.rb:14/22/96），生产里这条 rescue 捕获到的几乎必是**代码 bug**。
+  # 且 gem 的响应类型映射在 POST **之后**才执行（api.rb:28-32），此时若误降级
+  # 重发 → 重复消息。故：receiver 不是 @api_client.api 时必须原样抛出。
+
+  # 模拟真实业务 bug：响应类型映射阶段的 NoMethodError（receiver 不会是 api 本体）
+  def test_buggy_no_method_error_is_not_swallowed_into_raw_fallback
+    bug = NoMethodError.new("undefined method `gone' for nil", :gone, [], receiver: nil)
+    fake = BotTestHelper::FakeApi.new(raise_on: { send_message: bug })
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(fake),
+                                      sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                      clock: clock,
+                                      http_executor: http)
+
+    raised = assert_raises(NoMethodError) { api.send_text(1, "x") }
+    assert_equal :gone, raised.name, "业务 bug 必须原样向外抛出，不得被降级吞掉"
+    assert_empty http.calls, "业务 bug 绝不可降级重发（会导致重复消息）"
+  end
+
+  # 模拟"别的对象"上的 NoMethodError（如 helper 内部对 nil 调方法）
+  def test_no_method_error_from_other_receiver_is_re_raised
+    helper = Object.new
+    bug = NoMethodError.new("undefined method `call' for #<Object>", :call, [], receiver: helper)
+    fake = BotTestHelper::FakeApi.new(raise_on: { send_message: bug })
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(fake),
+                                      sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                      clock: clock,
+                                      http_executor: http)
+
+    assert_raises(NoMethodError) { api.send_text(1, "x") }
+    assert_empty http.calls, "receiver 不是 api 本体 → 不得走 raw 降级"
+  end
+
+  # 对照组：receiver 正是 gem 的 api 对象（白名单缺失）→ 仍应降级 raw
+  def test_gem_whitelist_miss_still_falls_back_to_raw
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["sendMessage"])
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(gem_like),
+                                      sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                      clock: clock,
+                                      http_executor: http)
+
+    api.send_text(123, "hi", thread_id: 5)
+
+    assert_empty gem_like.sent_messages, "白名单缺失 → gem 侧不应真的发出"
+    assert_equal 1, http.calls.size, "白名单缺失仍须降级走 raw 通道（保底能力不丢）"
+    assert_match(%r{/sendMessage\z}, http.last_url)
+    assert_equal 5, http.last_body[:message_thread_id], "降级路径也必须透传 thread id"
+  end
+
+  # 白名单缺失 → setMyCommands 仍降级 raw（对照组，保底能力不丢）
+  def test_register_main_commands_whitelist_miss_still_falls_back_to_raw
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["setMyCommands"])
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(gem_like),
+                                      sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                      clock: clock,
+                                      http_executor: http)
+
+    api.register_main_commands
+
+    assert_nil gem_like.registered_commands
+    assert_equal 1, http.calls.size
+    assert_match(%r{/setMyCommands\z}, http.last_url)
+  end
+
+  # gem 2.8.1 白名单缺 setMyCommands 之外的路径时同样只对 api 本体降级
+  def test_register_main_commands_re_raises_business_bug_no_method_error
+    bug = NoMethodError.new("undefined method `command' for nil", :command, [], receiver: nil)
+    fake = BotTestHelper::FakeApi.new(raise_on: { set_my_commands: bug })
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(fake),
+                                      sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                      clock: clock,
+                                      http_executor: http)
+
+    assert_raises(NoMethodError) { api.register_main_commands }
+    assert_empty http.calls, "业务 bug 不得被 setMyCommands 降级路径吞掉"
   end
 end

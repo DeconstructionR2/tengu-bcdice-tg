@@ -33,6 +33,38 @@ class TestSend < Minitest::Test
     assert_equal "hi", fake.sent_messages.first[:text]
   end
 
+  # --- 空串短路（F5）-------------------------------------------------------
+  #
+  # Chunker.split("") == [""] 是被钉住的切段语义，但**发空消息会被 Telegram
+  # 以 400 拒**（"text must be non-empty"），还会留一条脏消息。故在发送层短路。
+
+  def test_empty_text_sends_nothing_and_returns_empty_array
+    api, fake, _sleeper, = build_api
+    result = api.send_text(1, "")
+
+    assert_empty fake.sent_messages, "空串绝不可发出去（Telegram 会 400 拒）"
+    assert_equal [], result, "空串发送应返回空数组（无段可发）"
+  end
+
+  def test_nil_text_sends_nothing
+    api, fake, = build_api
+    assert_equal [], api.send_text(1, nil)
+    assert_empty fake.sent_messages, "nil 文本同样不得发出（to_s 为空串）"
+  end
+
+  def test_empty_text_even_with_thread_does_not_send
+    api, fake, = build_api
+    api.send_text(-100_1, "", thread_id: 42)
+    assert_empty fake.sent_messages, "话题场景的空串同样短路"
+  end
+
+  def test_whitespace_only_text_is_still_sent
+    # 边界：只有严格空串才短路，含空白的内容是真内容，不该被吞
+    api, fake, = build_api
+    api.send_text(1, " ")
+    assert_equal 1, fake.sent_messages.size, "单个空格不是空串，不应被短路"
+  end
+
   # --- thread 透传 ---------------------------------------------------------
 
   def test_message_thread_id_passed_through
@@ -88,12 +120,17 @@ class TestSend < Minitest::Test
     assert_empty sleeper.calls, "配速是**每聊天**的，不同 chat 互不影响"
   end
 
-  def test_pacing_is_per_thread_within_chat
+  # Telegram 的限流口径是**每聊天**（每群 20 条/分钟），不是每话题。
+  # 早期实现把 key 拼成 "chat_id/thread_id"，forum 群多话题并发时会绕开配速
+  # 导致同一聊天超速 → 429。此用例钉死正确口径：同聊天**跨话题仍要配速**。
+  def test_pacing_is_per_chat_even_across_threads
     api, _fake, sleeper, = build_api
     api.send_text(7, "a", thread_id: 1)
-    api.send_text(7, "b", thread_id: 2) # 同群不同话题 → 独立计数
+    api.send_text(7, "b", thread_id: 2) # 同群不同话题 → 仍属同一聊天桶
 
-    assert_empty sleeper.calls, "话题维度独立配速（key = chat_id/thread_id）"
+    assert_equal 1, sleeper.calls.size,
+                 "限流是**每聊天**的：同群不同话题也必须配速等待（否则 forum 多话题并发撞 429）"
+    assert_equal 1.0, sleeper.calls[0]
   end
 
   def test_no_sleep_when_enough_time_already_elapsed

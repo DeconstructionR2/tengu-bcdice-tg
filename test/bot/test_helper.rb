@@ -119,6 +119,45 @@ module BotTestHelper
     end
   end
 
+  # 仿 gem 的 Telegram::Bot::Api：方法名白名单 + method_missing → super。
+  #
+  # 为什么要仿：**只有经 method_missing 的 super 抛出的 NoMethodError 才有
+  # receiver == api 本体**（Ruby 只在该路径填 receiver；手工
+  # `NoMethodError.new("msg")` 的 receiver 会 ArgumentError）。
+  # F3 的降级判别（receiver 是不是 @api_client.api）必须用真 gem 语义验证，
+  # 否则测试自己就假了。missing: 传端点名模拟"该 gem 版本白名单没收录"。
+  class FakeGemLikeApi
+    ENDPOINTS = {
+      "sendMessage" => true, "sendDocument" => true, "setMyCommands" => true
+    }.freeze
+
+    attr_reader :sent_messages, :documents, :registered_commands, :requested
+
+    def initialize(missing: [])
+      @missing = Array(missing)
+      @sent_messages = []
+      @documents = []
+      @registered_commands = nil
+      @requested = []
+    end
+
+    def method_missing(name, *args, **kwargs, &blk)
+      endpoint = camelize(name.to_s)
+      @requested << endpoint
+      return super unless ENDPOINTS.key?(endpoint) && !@missing.include?(endpoint)
+
+      case endpoint
+      when "sendMessage" then @sent_messages << kwargs
+      when "sendDocument" then @documents << kwargs
+      when "setMyCommands" then @registered_commands = kwargs
+      end
+    end
+
+    def camelize(str)
+      str.split("_").map { |s| s.sub(/\A./, &:upcase) }.join
+    end
+  end
+
   # 构造一个全 mock 的 TelegramApi
   def build_api(api: nil, clock: nil, http: nil, parse_mode: nil, raise_on: nil)
     clock ||= FakeClock.new
