@@ -1,0 +1,10 @@
+# Docker 构建上下文排除（Phase 4 启用）
+.git/
+references/src/
+data/
+vendor/bundle/
+.env
+*.db
+*.db-wal
+*.db-shm
+*.log
