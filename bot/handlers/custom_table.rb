@@ -332,7 +332,9 @@ module TelegramBot
       # ---- 命令层判定常量（母本 updateDice.js:55 正则逐字照搬）-------------
       DICE_EXPR_PATTERN = /\A(?:\d+|\d+[dD]\d+)(?:[+-](?:\d+|\d+[dD]\d+))*(?:\+x)?\z/
       # 母本 command_utility.js:8-11 checkInvalidCharForDice（快捷名禁用字符集）
-      DICE_NAME_FORBIDDEN = /[#\[\]()'`",.\\\/\s\u3000]/
+      # 注：母本字符类含 \b（\x08 退格）；Ruby 的 \s 不含它，显式补上
+      # （kimi T3.4 评审提案 #4）
+      DICE_NAME_FORBIDDEN = /[#\[\]()'`",.\\\/\s\x08　]/
       # 母本 updateData.js:44 / deleteData.js:48 / addPermission.js:34
       DIGITS_PATTERN = /\A\d+\z/
       # range 子命令的整数（可带正负号；上下界守卫在解析后做）
@@ -765,6 +767,9 @@ module TelegramBot
         return NOT_ADMIN_BITS unless write_allowed?(table, context, :admin_bits)
 
         user_id = uid.to_i
+        # 0 / 超 int64 的 ID 会在 db 归一层被滤掉却仍报「已添加」（假成功，
+        # kimi T3.4 评审提案 #2）——handler 侧先拦
+        return BAD_USER_ID if user_id.zero? || user_id > TenguDB::INT64_MAX
         # 母本 :16-18：查全表权限数组（不止前三位）
         return "该用户（#{user_id}）已在权限名单里。" if table.permitted?(user_id)
 
@@ -1009,6 +1014,13 @@ module TelegramBot
 
       def caller_id(context)
         uid = context[:user_id].to_i
+        # 匿名管理员不是可辨识的本人：Telegram 把其 message.from 置为平台共享的
+        # GroupAnonymousBot id。让它当表主 = 任意群的匿名管理员都能凭
+        # permission[0] 跨群删改这张公共表、且真人永远管不了它（kimi T3.4 评审
+        # 提案 #1，已实证复现）。fail-closed：匿名身份一律当「拿不到本人」
+        # （写操作报 CALLER_UNKNOWN），与 Admin 文件头的既定纪律一致。
+        return nil if uid == TelegramBot::Admin::ANONYMOUS_ADMIN_USER_ID
+
         uid.zero? ? nil : uid
       end
 
@@ -1090,8 +1102,9 @@ module TelegramBot
       #
       # 返回 nil = 通过；否则是给用户看的错误文案。
       # ⚠️ 与母本的两处差异（登记，见报告 §4 决策 6）：
-      #   ① 母本的算式累计有 JS 字符串拼接 quirk（常量项逐字拼成字符串），本实现按
-      #      **整数语义**计算（母本 quirk 只在畸形输入上出现，且结果是垃圾）。
+      #   ① 母本的算式累计有 JS 字符串拼接 quirk（常量项逐字拼成字符串——
+      #      `1d6+5` 这类**正常**带常量骰式就会触发，min 被拼成 "15" 致发布
+      #      误拒），本实现按**整数语义**计算，属有意修复而非遗漏。
       #   ② 母本只跳过 isUse=true；**骰式含 +x 时**（其 help 明示「判定できないから
       #      スキップ」）本实现同样跳过——两条并列。
       def data_verification(table)

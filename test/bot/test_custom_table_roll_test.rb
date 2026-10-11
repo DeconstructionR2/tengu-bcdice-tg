@@ -60,6 +60,24 @@ class TestCustomTableRoll < Minitest::Test
     )
   end
 
+  def test_randomizer_factory_produces_a_fresh_instance_per_roll
+    # kimi T3.4 评审提案 #5：callable randomizer 是**工厂**——每次掷骰取新实例
+    # （BCDice::Randomizer 会累积 rand_results，长驻进程共享一个会撞上限）
+    made = []
+    factory = -> { r = RandomizerMock.new([[3, 6]]); made << r; r }
+    h = TelegramBot::Handlers::CustomTableHandler.new(
+      custom_tables: @ct, admin: nil, builtin: @builtin,
+      randomizer: factory, logger: Logger.new(IO::NULL)
+    )
+
+    2.times do
+      h.call(name: "ct", args: "roll sbx", chat_id: CHAT_ID,
+             user_id: STRANGER, chat_type: "supergroup", kind: :slash)
+    end
+
+    assert_equal 2, made.size, "每次掷骰都必须向工厂取新实例"
+  end
+
   # 建一张 1d6 表并填 1..6
   def seed_six(name = "六表", dice_name: "a", expr: "1d6")
     @ct.create_table(chat_id: CHAT_ID, name: name, author_id: AUTHOR)

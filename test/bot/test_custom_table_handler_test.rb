@@ -213,6 +213,25 @@ class TestCustomTableHandler < Minitest::Test
     assert_nil table("无发起人表")
   end
 
+  def test_anonymous_admin_cannot_own_tables
+    # kimi T3.4 评审提案 #1（必修）的回归钉：匿名管理员（GroupAnonymousBot，
+    # 平台共享 id）一律当「拿不到本人」——否则它发布的公共表 permission[0]
+    # 是共享 id，任意群的匿名管理员都能跨群删改、真人反而永远管不了
+    anon = TelegramBot::Admin::ANONYMOUS_ADMIN_USER_ID
+    assert_includes ct_call("create 匿名表", user_id: anon), "识别不了发起人"
+    assert_nil table("匿名表")
+  end
+
+  def test_perm_add_rejects_zero_and_out_of_range_ids
+    # kimi T3.4 评审提案 #2 的回归钉：0 / 超 int64 的 ID 不得在 db 归一被滤后
+    # 仍报「已添加」（假成功）
+    seed_table("权限表")
+
+    assert_includes ct_call("perm add 权限表 0"), "用户 ID"
+    assert_includes ct_call("perm add 权限表 #{TenguDB::INT64_MAX + 1}"), "用户 ID"
+    assert_equal [AUTHOR], table("权限表").permissions, "被拒的 ID 不得进权限数组"
+  end
+
   # --- rename ---------------------------------------------------------------
 
   def test_rename_moves_the_table_with_payload_intact
