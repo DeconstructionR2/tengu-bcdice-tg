@@ -441,6 +441,51 @@ class TestBank < Minitest::Test
     assert_equal 100, bank.fetch(chat_id: BIG_CHAT_ID).sum_money
   end
 
+  def test_statement_read_and_delete_happen_inside_a_transaction
+    # kimi T3.2 评审提案 #1 的回归钉：结算的「读账 → 清零」也必须在事务内——
+    # 否则并发下两步之间落入的存款会被静默清掉且不上报表
+    @bank.save_money(chat_id: BIG_CHAT_ID, amount: 100)
+
+    calls = []
+    probe = Class.new(SimpleDelegator) do
+      define_method(:transaction) do |*args, &blk|
+        calls << args.first
+        super(*args, &blk)
+      end
+    end.new(@conn)
+
+    bank = TenguDB::Bank.new(probe)
+    record, attempted, deleted = bank.statement(chat_id: BIG_CHAT_ID)
+
+    assert_equal [:immediate], calls, "statement 的读删必须走 :immediate 事务"
+    assert attempted
+    assert deleted
+    assert_equal 100, record.sum_money
+    assert_nil bank.fetch(chat_id: BIG_CHAT_ID)
+  end
+
+  def test_busy_exception_is_warned_not_disguised_as_bad_input_only
+    # kimi T3.2 评审提案 #5：锁竞争被译成「输入有误」会误导排障——
+    # 回 :error 的同时必须留一条结构性 warn（只有异常类名）
+    probe = Class.new(SimpleDelegator) do
+      define_method(:transaction) do |*args, &blk|
+        raise SQLite3::BusyException, "database is locked"
+      end
+    end.new(@conn)
+
+    warnings = []
+    logger = Object.new
+    logger.define_singleton_method(:warn) { |msg| warnings << msg }
+
+    bank = TenguDB::Bank.new(probe, logger: logger)
+    result = bank.save_money(chat_id: BIG_CHAT_ID, amount: 100)
+
+    assert result.error?, "锁竞争应回 :error（天狗 catch→null→输入错误文案）"
+    assert_equal 1, warnings.size
+    assert_includes warnings.first, "SQLite3::BusyException"
+    assert_equal 0, @bank.count_for(chat_id: BIG_CHAT_ID), "失败不得留下半截账"
+  end
+
   def test_a_failure_inside_the_transaction_leaves_no_partial_row
     @conn.execute(
       "INSERT INTO bank_record (chat_id, thread_id, sum_money, money_record, item_record) " \

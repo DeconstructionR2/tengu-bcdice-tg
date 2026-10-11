@@ -184,13 +184,16 @@ module TelegramBot
       # ------------------------------------------------------------------
       def handle_item(chat_id, thread_id, rest)
         action, name = rest.split(/\s+/, 2)
-        name = name.to_s.strip
+        # 道具名剥光全部空白（record.js:15：天狗对整条命令先 replace(/\s+/g,"")，
+        # 故天狗道具名不可能含空格——「i+秘 传 的 茶」在天狗就是「秘传的茶」。
+        # kimi T3.2 评审提案 #3：保留空格是未申报的语义分叉，此处对齐母本）。
+        name = name.to_s.gsub(/\s+/, "")
         return BAD_INPUT if name.empty?
 
         result =
           case action.to_s.downcase
           when "add" then bank.add_item(chat_id: chat_id, thread_id: thread_id, name: name)
-          when "del", "delete", "remove" then bank.remove_item(chat_id: chat_id, thread_id: thread_id, name: name)
+          when "del" then bank.remove_item(chat_id: chat_id, thread_id: thread_id, name: name)
           else return BAD_INPUT
           end
 
@@ -268,11 +271,21 @@ module TelegramBot
       # 只接受**无符号**数字串：\d+（天狗的两条正则里 `+`/`-` 是操作符，
       # 金额本身没有符号；`deposit -50` 在天狗那里落 default → 输入错误）。
       # 小数 / 千分位 / 「1e5」/ 全角数字 / 前后缀一律 nil（天狗正则同样不匹配）。
+      #
+      # 两处与 record.js 对齐（kimi T3.2 评审提案 #2/#3）：
+      # - **先剥光全部空白**（record.js:15 `content.replace(/\s+/g,"")`：
+      #   天狗 `m+1 00` 剥成 `m+100` 照收，本项目 `deposit 1 00` 同款）；
+      # - **上限 INT64_MAX**：无符号输入天然该两侧对称——不拦的话
+      #   `withdraw INT64_MAX+1` 会经 乘-1=INT64_MIN 落进界内，出现
+      #   「同一数字存不进、取得出」的不对称（已实证）。
       def parse_amount(text)
-        s = text.to_s.strip
+        s = text.to_s.gsub(/\s+/, "")
         return nil unless /\A\d+\z/.match?(s)
 
-        s.to_i
+        v = s.to_i
+        return nil if v > TenguDB::Bank::INT64_MAX
+
+        v
       end
 
       def warn_line(message)

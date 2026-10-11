@@ -178,8 +178,10 @@ module TenguDB
     COLUMNS = "chat_id, thread_id, sum_money, money_record, item_record, updated_at"
 
     # @param connection [TenguDB::Connection, nil] nil = DB 层单连接
-    def initialize(connection = nil)
+    # @param logger [#warn, nil] 只记结构性信息（异常类名），绝不记用户输入
+    def initialize(connection = nil, logger: $stderr)
       @conn = connection || Connection.instance
+      @logger = logger
     end
 
     # 群级作用域的 thread_id（E4：forum General 话题恒为 1，与群级 0 同义）
@@ -261,15 +263,25 @@ module TenguDB
       chat = normalize_chat_id(chat_id)
       raise InvalidArgument, "chat_id" if chat.nil?
 
-      record = fetch(chat_id: chat, thread_id: thread_id)
-      return [nil, false, false] if record.nil? # 天狗：查无记录 → 早退，不做删除
-
-      # 真删；DB 故障在这里抛异常（handler/router 兜底），不吞
-      conn.execute(
-        "DELETE FROM bank_record WHERE chat_id = ? AND thread_id = ?",
-        [chat, self.class.normalize_thread_id(thread_id)]
-      )
-      [record, true, true]
+      # 读→删同样必须在事务内（kimi T3.2 评审提案 #1）：否则并发下 fetch 与
+      # DELETE 之间落入的存款会被静默清掉、且不出现在报表里。单线程轮询虽
+      # 不触发，但本文件头部自立「整行读改写在事务内」的纪律要对 statement 成立。
+      # 块内不 return（sqlite3 transaction 的 ensure commit 陷阱），赋值出块。
+      outcome = nil
+      conn.transaction(:immediate) do
+        record = fetch(chat_id: chat, thread_id: thread_id)
+        if record.nil?
+          outcome = [nil, false, false] # 天狗：查无记录 → 早退，不做删除
+        else
+          # 真删；DB 故障在这里抛异常（handler/router 兜底），不吞
+          conn.execute(
+            "DELETE FROM bank_record WHERE chat_id = ? AND thread_id = ?",
+            [chat, self.class.normalize_thread_id(thread_id)]
+          )
+          outcome = [record, true, true]
+        end
+      end
+      outcome
     end
 
     # ------------------------------------------------------------------
@@ -304,6 +316,10 @@ module TenguDB
       # **正常**路径（ensure 里 commit）→ 半截改动被提交。故块内只赋值
       # outcome，出块后再 return。
       outcome = nil
+      # kimi T3.2 评审提案 #4：返回值用事务内**已算好的**字段直接构造，
+      # 不做提交后的二次 fetch——省一次 SELECT，也消掉「并发下 fetch 得 nil →
+      # SaveResult.ok(nil) → handler NoMethodError」的面。
+      saved = nil
       begin
         conn.transaction(:immediate) do
           row = conn.get_first_hash(
@@ -313,7 +329,10 @@ module TenguDB
 
           if row.nil?
             # 天狗「データなし、新規作成」分支：**无条件建档**（连只删道具也开账）
-            insert_row(chat, thread, amount, [amount], item_name ? [item_name] : [])
+            initial_items = item_name ? [item_name] : []
+            insert_row(chat, thread, amount, [amount], initial_items)
+            saved = BankRecord.new(chat_id: chat, thread_id: thread, sum_money: amount,
+                                   money_record: [amount], item_record: initial_items)
             outcome = SaveResult::OK
           else
             current = to_record(row)
@@ -340,7 +359,11 @@ module TenguDB
                 end
               end
 
-              update_row(chat, thread, sum, flow, items) if outcome.nil?
+              if outcome.nil?
+                update_row(chat, thread, sum, flow, items)
+                saved = BankRecord.new(chat_id: chat, thread_id: thread, sum_money: sum,
+                                       money_record: flow, item_record: items)
+              end
             end
             outcome ||= SaveResult::OK
           end
@@ -349,13 +372,16 @@ module TenguDB
         # 天狗 saveRecord 的 .catch(() => null) → 玩家看到输入错误。
         # 异常穿出 transaction 时 sqlite3 已在 ensure 里回滚整笔（我们没写过
         # 半截：两个早退分支都在写之前就定了 outcome）。
+        # kimi T3.2 评审提案 #5：锁竞争（BusyException）被译成「输入有误」会误导
+        # 排障——单独留一条结构性 warn（只有异常类名，不含任何用户输入）。
+        warn_line("[bank] 存储层锁竞争：#{e.class}") if e.is_a?(SQLite3::BusyException)
         return SaveResult.error(e.class)
       end
 
       return SaveResult.error(AmountOutOfRange) if outcome == SaveResult::ERROR
       return SaveResult.item_missing if outcome == SaveResult::ITEM_MISSING
 
-      SaveResult.ok(fetch(chat_id: chat, thread_id: thread))
+      SaveResult.ok(saved)
     end
 
     # 该 (chat, thread) 名下的行数（诊断/测试用）
@@ -437,7 +463,7 @@ module TenguDB
     end
 
     def warn_line(message)
-      warn(message)
+      @logger.warn(message)
     rescue StandardError
       nil
     end

@@ -7,8 +7,9 @@
 #
 # handler 层：
 #   - 子命令映射：deposit/withdraw/item add/item del/balance/statement/reset/help
-#   - 金额解析逐字忠实 record.js：只收 `-?\d+`；0 / 小数 / 千分位 / 全角 / 十六进制
-#     一律输入错误；**透支允许**（余额变负且如实呈现）
+#   - 金额解析逐字忠实 record.js：只收 `\d+`（先剥光全部空白，record.js:15）；
+#     0 / 小数 / 千分位 / 全角 / 十六进制 / 超 INT64_MAX（两侧对称）一律输入错误；
+#     **透支允许**（余额变负且如实呈现）
 #   - 893 彩蛋（change893）：金额串**含** 893 即小怪装饰（1893/8930/-893 都命中）
 #   - 天狗文案语义：查账「不动账」vs 结算「出完清零」；账上没有的道具 → 专句
 #   - 未知子命令 / 空参 → 输入错误或用法表（天狗 default 分支）
@@ -119,6 +120,23 @@ class TestBankHandler < Minitest::Test
     assert_equal 0, @bank.count_for(chat_id: CHAT_ID)
   end
 
+  def test_withdraw_beyond_int64_is_rejected_symmetrically
+    # kimi T3.2 评审提案 #2 的回归钉：无符号数字串两侧对称——
+    # withdraw INT64_MAX+1 曾因 乘-1=INT64_MIN 落进界内而成功入账
+    out = call("withdraw #{TenguDB::Bank::INT64_MAX + 1}")
+
+    assert_includes out, "输入有误"
+    assert_equal 0, @bank.count_for(chat_id: CHAT_ID)
+  end
+
+  def test_amount_with_inner_whitespace_is_stripped_like_tengu
+    # record.js:15 对整条命令 replace(/\s+/g,"")：天狗 m+1 00 = m+100
+    out = call("deposit 1 00")
+
+    assert_includes out, "已更新万札"
+    assert_equal 100, balance.sum_money
+  end
+
   def test_missing_arguments_are_rejected
     assert_includes call("deposit"), "输入有误"
     assert_includes call("item add"), "输入有误"
@@ -217,13 +235,17 @@ class TestBankHandler < Minitest::Test
     assert_equal ["茶"], balance.item_record
   end
 
-  def test_item_name_may_contain_spaces
-    assert_includes call("item add 秘传的茶"), "秘传的茶"
+  def test_item_name_whitespace_is_stripped_like_tengu
+    # record.js:15 先剥光整条命令的空白——天狗道具名不可能含空格；
+    # 「i+秘 传 的 茶」在天狗落账为「秘传的茶」，本项目对齐（评审提案 #3）
+    assert_includes call("item add 秘 传 的 茶"), "秘传的茶"
     assert_equal ["秘传的茶"], balance.item_record
   end
 
   def test_item_names_with_metacharacters_are_bound_not_interpolated
-    nasty = %q{茶'; DROP TABLE bank_record; --}
+    # 注：道具名先经 record.js:15 同款剥空白（上面那条测试钉过），
+    # 故本用例的注入串不含空格——要验的是引号/分号/注释符全部按值绑定
+    nasty = %q{茶';DROP_TABLE_bank_record;--}
     out = call("item add #{nasty}")
 
     assert_includes out, nasty
