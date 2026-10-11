@@ -47,6 +47,7 @@ require_relative "router"
 require_relative "admin"
 require_relative "handlers/dice"
 require_relative "handlers/settings"
+require_relative "handlers/help"
 require_relative "migration"
 require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
@@ -100,8 +101,8 @@ bot_username =
 puts "[T2.6] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
 puts "[T2.6] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
 puts "[T2.6] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨按群持久化）"
-puts "[T2.6] 已挂 handler：/start /settings /roll /nd /system + 辅助轨" \
-     "（bot/handlers/dice.rb + bot/handlers/settings.rb）；secret/bank/ct/log 静默等 T3.x"
+puts "[T2.6] 已挂 handler：/start /help /settings /roll /nd /system + 辅助轨" \
+     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb）；secret/bank/ct/log 占位应答待 T3.x"
 puts "[T2.6] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
 puts "[T2.6] 管理员助手已挂（bot/admin.rb，getChatMember；查询失败 fail-closed）"
 
@@ -143,7 +144,15 @@ settings_handler = TelegramBot::Handlers::SettingsHandler.new(
 
 router = TelegramBot::Router.new(
   api: api,
-  handlers: { start: TelegramBot::StartHandler.new }
+  handlers: { start: TelegramBot::StartHandler.new,
+              # /help 与「菜单已上架、T3.x 才实现」的占位应答（真机验收教训：
+              # 菜单里有的命令没 handler = 用户视角「bot 死了」；菜单外的
+              # 未知 slash 仍一律静默）。
+              help: TelegramBot::Handlers::HelpHandler.new,
+              secret: TelegramBot::Handlers::PendingHandler.new(feature: "暗骰 /secret"),
+              bank: TelegramBot::Handlers::PendingHandler.new(feature: "天狗银行 /bank"),
+              ct: TelegramBot::Handlers::PendingHandler.new(feature: "自定义表 /ct"),
+              log: TelegramBot::Handlers::PendingHandler.new(feature: "跑团 log /log") }
                 .merge(TelegramBot::Handlers::DiceHandler.registry(dice))
                 .merge(TelegramBot::Handlers::SettingsHandler.registry(settings_handler)),
   bot_username: bot_username,

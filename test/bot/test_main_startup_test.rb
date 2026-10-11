@@ -126,7 +126,7 @@ class TestMainStartup < Minitest::Test
 
       assert File.exist?(db_path), "启动应按 DB_PATH 建库文件（实际输出：#{out[0, 400]}）"
       assert_includes out, "[T2.6]", "启动日志前缀应更新为 T2.6"
-      assert_includes out, "handlers/dice.rb", "启动日志应列出已挂的 handler"
+      assert_includes out, "bot/handlers/dice.rb", "启动日志应列出已挂的 handler"
       assert_includes out, "handlers/settings.rb", "启动日志应确认 /settings handler 已挂（T2.6）"
       assert_includes out, "admin.rb", "启动日志应确认管理员助手已挂（T2.6）"
       assert_includes out, "migration.rb", "启动日志应确认群升级 re-key 已挂（T2.5）"
@@ -191,10 +191,11 @@ class TestMainStartup < Minitest::Test
       sent = JSON.parse(File.read(sent_file)).fetch("sent")
 
       texts = sent.map { |m| m["text"] }
-      assert_equal 3, sent.size, "应发 3 条（/roll SB、裸 SB、/system），/help 静默：#{texts.inspect}"
+      assert_equal 4, sent.size, "应发 4 条（/roll SB、裸 SB、/system、/help——菜单命令必须有应答）：#{texts.inspect}"
       assert_includes texts[0], "サツバツ", "/roll SB 应出力"
       assert_includes texts[1], "サツバツ", "裸 SB（辅助轨）应出力"
       assert_includes texts[2], "本话题", "/system 话题内应明示作用域"
+      assert_includes texts[3], "命令一览", "/help 应有应答（菜单命令不许静默）"
       assert_equal 88, sent.first["message_thread_id"], "thread 应逐条透传"
       refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
 
