@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 # ============================================================================
-# bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler / T2.5 挂 migration）
+# bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler / T2.5 挂 migration
+#              / T2.6 挂 /settings + 管理员助手 + 辅助轨开关持久化）
 #
 # 本文件保证 `bundle exec ruby bot/main.rb` 能起：
 #   1. 加载引擎（lib/engine_bootstrap.rb —— 与测试/spike 共用同一初始化序列）；
@@ -10,17 +11,26 @@
 #   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨）并挂 handler；
 #   5. 起长轮询。
 #
-# T2.4 范围纪律：
-#   - roll / nd / system / aux **已挂真 handler**（bot/handlers/dice.rb）；
-#   - secret / bank / ct / log / settings **尚无 handler** → 按 router 的静默
-#     策略不回复（等 T3.x 逐个填）。这不是遗漏，是范围纪律。
-#   - aux_enabled 仍默认 true：**每群可关的持久化**归后续 /settings 任务
-#     （要扩 chat_settings 加列 → 属 schema 变更，不在本任务范围）。
-#     router 侧的接口（->(chat_id, thread_id) { bool }）已就位，届时改这一行。
+# 已挂的 handler（T2.6 收官 Phase 2）：
+#   /start /help(静默待做) /settings /roll /nd /system + 辅助轨（裸 ASCII）
+#   **尚无 handler**（按 router 静默策略不回复，等 T3.x 逐个填）：
+#   secret / bank / ct / log
+#
+# T2.6 范围纪律：
+#   - aux_enabled **已持久化**：读群级 chat_settings.aux_enabled（schema.sql
+#     加列 + db/connection.rb 的 COLUMN_ADDITIONS 补旧库，两条腿缺一不可）。
+#   - 管理员助手 Admin 是 getChatMember 的**唯一**实现，只构造一个实例注入
+#     SettingsHandler（缓存要跨消息复用）；T3.4 会复用同一个对象。
+#   - Admin 在 API 查询失败时 **fail-closed 返回 false**（权限判定的错误方向
+#     必须选安全的那侧）；私聊恒 true。
+#
+# T2.4 范围纪律（roll / nd / system / aux 已挂真 handler；secret / bank /
+#   ct / log / settings 当时尚无 handler → 静默。/settings 已由 T2.6 补上。）
 #
 # T2.5 范围纪律（群升级 re-key）：
 #   - Migration 由本文件构造并**注入** Router，router 自己 require 不它、不碰 DB；
-#   - 与 DiceHandler **共用同一 Connection 实例**（单连接纪律，§3 决9）。
+#   - 与 DiceHandler / SettingsHandler **共用同一 Connection 实例**（单连接
+#     纪律，§3 决9）。
 #
 # 跑法：
 #   bundle exec ruby bot/main.rb                # 正式 token（.env 的 TELEGRAM_BOT_TOKEN）
@@ -34,7 +44,9 @@ $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 require_relative "config"
 require_relative "telegram_api"
 require_relative "router"
+require_relative "admin"
 require_relative "handlers/dice"
+require_relative "handlers/settings"
 require_relative "migration"
 require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
@@ -85,20 +97,21 @@ bot_username =
     nil
   end
 
-puts "[T2.5] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
-puts "[T2.5] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
-puts "[T2.5] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨默认开）"
-puts "[T2.5] 已挂 handler：/start /roll /nd /system + 辅助轨（bot/handlers/dice.rb）；" \
-     "其余命令静默等 T3.x"
-puts "[T2.5] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
+puts "[T2.6] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
+puts "[T2.6] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
+puts "[T2.6] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨按群持久化）"
+puts "[T2.6] 已挂 handler：/start /settings /roll /nd /system + 辅助轨" \
+     "（bot/handlers/dice.rb + bot/handlers/settings.rb）；secret/bank/ct/log 静默等 T3.x"
+puts "[T2.6] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
+puts "[T2.6] 管理员助手已挂（bot/admin.rb，getChatMember；查询失败 fail-closed）"
 
 # 路由（T2.3 建，T2.4 挂真 handler）：
 #   - slash 主轨：/start /help /settings /roll /nd /system /secret /bank /ct /log
 #     命令集合以 MainMenu::ENTRIES 为准；未注册 handler 的命令一律静默
-#     （故 /secret /bank /ct /log /settings 目前静默，等 T3.x）。
+#     （故 /secret /bank /ct /log 目前静默，等 T3.x；/help 同样静默）。
 #   - 辅助轨：裸 ASCII 骰式（N4,3 / SB / 2d6>=4…），不命中一律静默（防抢话，§12 R4）。
-#   - aux_enabled 默认开；每群可关的**持久化**（读 chat_settings）归后续 /settings
-#     任务（需扩 chat_settings 加列），本任务只保留可注入的开关查询接口。
+#   - aux_enabled 已持久化（T2.6）：读群级 chat_settings.aux_enabled，
+#     查不到行 = 默认开；查询失败由 router 的 fail-closed 兜底（异常→按关）。
 # 启动期强制打开 DB（建表 + schema）。
 #
 # 为什么不等第一次掷骰再惰性开：DB_PATH 写错 / 数据卷没挂这类**部署期**故障，
@@ -112,19 +125,37 @@ dice_db = nil
 begin
   dice_db = TenguDB::Connection.instance
 rescue StandardError => e
-  warn("[T2.5] 打开数据库失败（路径=#{TelegramBot::Config.db_path}）：#{e.class}（异常消息不打印）")
-  warn("[T2.5] 请核对 DB_PATH 与数据卷权限（容器内应为 /app/data/tengu.db，且该目录可写）。")
+  warn("[T2.6] 打开数据库失败（路径=#{TelegramBot::Config.db_path}）：#{e.class}（异常消息不打印）")
+  warn("[T2.6] 请核对 DB_PATH 与数据卷权限（容器内应为 /app/data/tengu.db，且该目录可写）。")
   exit(1)
 end
 
-dice = TelegramBot::Handlers::DiceHandler.new(settings: TenguDB::Settings.new(dice_db))
+settings = TenguDB::Settings.new(dice_db)
+dice = TelegramBot::Handlers::DiceHandler.new(settings: settings)
+
+# T2.6：管理员助手（getChatMember 的唯一实现）。**只构造一个实例**并注入
+# SettingsHandler —— 缓存要跨消息复用，handler 各建一个就等于没有缓存。
+# T3.4 的自定义表改表权限会复用同一个对象（计划 §5）。
+admin = TelegramBot::Admin.new(api: api)
+settings_handler = TelegramBot::Handlers::SettingsHandler.new(
+  settings: settings, admin: admin
+)
 
 router = TelegramBot::Router.new(
   api: api,
   handlers: { start: TelegramBot::StartHandler.new }
-                .merge(TelegramBot::Handlers::DiceHandler.registry(dice)),
+                .merge(TelegramBot::Handlers::DiceHandler.registry(dice))
+                .merge(TelegramBot::Handlers::SettingsHandler.registry(settings_handler)),
   bot_username: bot_username,
-  aux_enabled: ->(_chat_id, _thread_id) { true },
+  # 辅助轨开关（T2.6：**已持久化**）。读群级 chat_settings.aux_enabled，
+  # 查不到行 = 默认开（db/settings.rb 的 DEFAULT_AUX_ENABLED）。
+  #
+  # 查询失败**不在这里兜底**：router 的 aux_track_enabled? 已经 fail-closed
+  # （异常 → 按关闭处理，见 bot/router.rb），这层不必重复判断，且重复判断会
+  # 出现「router 以为是关、这里是开」的双重真相。
+  aux_enabled: lambda { |chat_id, thread_id|
+    settings.aux_enabled(chat_id, thread_id: thread_id)
+  },
   # T2.5：群升级 re-key。**与 dice 共用同一连接**（单连接纪律，§3 决9）——
   # 两个 Connection 指向同一个文件会各自持有 sqlite3 句柄，WAL 下虽然
   # 不会坏数据，但写锁竞争与「谁先看到对方提交」的不确定性都是白捡的。

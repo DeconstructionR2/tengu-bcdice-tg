@@ -49,7 +49,9 @@ class TestMainStartup < Minitest::Test
       require #{File.join(REPO, "bot/config").inspect}
       require #{File.join(REPO, "bot/telegram_api").inspect}
       require #{File.join(REPO, "bot/router").inspect}
+      require #{File.join(REPO, "bot/admin").inspect}
       require #{File.join(REPO, "bot/handlers/dice").inspect}
+      require #{File.join(REPO, "bot/handlers/settings").inspect}
       require #{File.join(REPO, "lib/engine_bootstrap").inspect}
 
       $SENT = []
@@ -63,6 +65,12 @@ class TestMainStartup < Minitest::Test
         def self.get_me; Struct.new(:username).new("example_dice_bot"); end
         def self.send_message(**params); $SENT << params; :ok; end
         def self.set_my_commands(**params); $SET_COMMANDS = params; true; end
+        # T2.6：Admin#admin? 走 gem 的 get_chat_member（假身，零联网）。
+        # 固定回 administrator —— 只验「接线通 + 权限判定用上了」，
+        # 各 status 的分支由 test/bot/test_admin_test.rb 逐条覆盖。
+        def self.get_chat_member(chat_id:, user_id:)
+          Struct.new(:status).new("administrator")
+        end
       end
       class FakeClient; def api; FakeGemBackend; end; end
 
@@ -117,8 +125,10 @@ class TestMainStartup < Minitest::Test
       out, payload = run_startup(db_path)
 
       assert File.exist?(db_path), "启动应按 DB_PATH 建库文件（实际输出：#{out[0, 400]}）"
-      assert_includes out, "[T2.5]", "启动日志前缀应更新为 T2.5"
+      assert_includes out, "[T2.6]", "启动日志前缀应更新为 T2.6"
       assert_includes out, "handlers/dice.rb", "启动日志应列出已挂的 handler"
+      assert_includes out, "handlers/settings.rb", "启动日志应确认 /settings handler 已挂（T2.6）"
+      assert_includes out, "admin.rb", "启动日志应确认管理员助手已挂（T2.6）"
       assert_includes out, "migration.rb", "启动日志应确认群升级 re-key 已挂（T2.5）"
       refute_includes out, "FakeTokenForUnitTests",
                       "启动日志绝不能回显 token 值（token 纪律）"
@@ -197,6 +207,85 @@ class TestMainStartup < Minitest::Test
       )
       conn.close
       assert_equal [["NinjaSlayerEx"]], row, "话题级设置应落库"
+    end
+  end
+
+  # T2.6 的主验收闭环：**经 bot/main.rb 的真实接线**跑一遍
+  #   /settings aux off → 裸打 SB（静默） → /roll SB（照常） → /settings aux on → 裸打 SB（恢复）
+  # 并验开关真的落在**群级行**上（thread_id=0），且规则系统设置没被带偏。
+  def test_startup_persists_aux_switch_and_aux_track_goes_silent
+    Dir.mktmpdir("tengu-t2.6-main") do |dir|
+      db_path = File.join(dir, "tengu.db")
+      chat_id = -1_000_000_000_123_456_789
+
+      # 注意：update 列表要写成**子进程里的源码文本**，不能在父进程构造
+      # Telegram::Bot::Types::* 对象——父进程从不 require gem（那会真联网
+      # 或至少引入副作用），单测里没有常量可构造。
+      def update_src(n, text, chat_id)
+        <<~RUBY.strip
+          Telegram::Bot::Types::Update.new(update_id: #{n}, message: Telegram::Bot::Types::Message.new(
+            message_id: #{n}, date: 1_700_000_000,
+            chat: { id: #{chat_id}, type: "supergroup" },
+            from: { id: 1, is_bot: false, first_name: "T" }, text: "#{text}"))
+        RUBY
+      end
+
+      updates = [
+        update_src(1, "/roll SB", chat_id),
+        update_src(2, "SB", chat_id),
+        update_src(3, "/system NinjaSlayerEx", chat_id),
+        update_src(4, "/settings", chat_id),
+        update_src(5, "/settings aux off", chat_id),
+        update_src(6, "SB", chat_id),
+        update_src(7, "/roll SB", chat_id),
+        update_src(8, "/settings aux on", chat_id),
+        update_src(9, "SB", chat_id)
+      ].join(",\n")
+
+      shim = File.join(dir, "shim_aux.rb")
+      File.write(shim, shim_source(db_path).sub("$UPDATES = []", "$UPDATES = [\n#{updates}\n]"))
+
+      sent_file = File.join(dir, "sent.json")
+      out = IO.popen(
+        { "BUNDLE_GEMFILE" => File.join(REPO, "Gemfile") },
+        ["bundle", "exec", "ruby", shim],
+        err: %i[child out],
+        chdir: REPO
+      ) { |io| io.read }
+
+      assert File.exist?(sent_file), "子进程应写出记录（实际输出：#{out[0, 600]}）"
+      texts = JSON.parse(File.read(sent_file)).fetch("sent").map { |m| m["text"] }
+
+      # 9 条 in → 8 条 out：唯一被静默的是第 6 条（关掉后的裸 SB）。
+      # 逐条对照：1 /roll SB ✓、2 裸 SB ✓、3 /system ✓、4 /settings ✓、
+      #           5 aux off 确认 ✓、**6 裸 SB 静默**、7 /roll SB ✓、
+      #           8 aux on 确认 ✓、9 裸 SB ✓
+      assert_equal 8, texts.size,
+                   "关掉后那一次裸 SB 必须静默（9 条 in / 8 条 out）：#{texts.inspect}"
+      assert_includes texts[3], "当前规则系统", "/settings 无参应回总览"
+      assert_includes texts[3], "辅助轨：开", "关掉之前总览应显示辅助轨是开的"
+      assert_includes texts[4], "已关闭", "/settings aux off 应确认"
+      assert_includes texts[5], "サツバツ", "关掉辅助轨不影响 slash 主轨"
+      assert_includes texts[6], "已开启", "/settings aux on 应确认"
+      assert_includes texts[7], "サツバツ", "重新打开后裸打应恢复"
+      refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
+
+      require "sqlite3"
+      conn = SQLite3::Database.new(db_path)
+      aux = conn.execute(
+        "SELECT thread_id, aux_enabled FROM chat_settings WHERE chat_id = ? AND thread_id = 0",
+        [chat_id]
+      )
+      game = conn.execute(
+        "SELECT game_system FROM chat_settings WHERE chat_id = ? AND thread_id = 0",
+        [chat_id]
+      )
+      conn.close
+
+      # 第 9 条把开关又打开了（流程结尾），所以库里应是 1
+      assert_equal [[0, 1]], aux, "aux_enabled 应落在群级行(thread_id=0)"
+      assert_equal [["NinjaSlayerEx"]], game,
+                   "改辅助轨不得影响该群的规则系统设置"
     end
   end
 end

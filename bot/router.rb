@@ -309,7 +309,10 @@ module TelegramBot
     # @param key [Symbol, String] slash 命令名（"roll"）或辅助轨标记（:aux）
     # @param handler [#call] 签名 `handler.call(context)`，context 是 Hash：
     #   `{ router:, api:, kind:, command:, name:, args:, text:, chat_id:,
-    #      thread_id:, user_id:, message: }`
+    #      thread_id:, user_id:, chat_type:, message: }`
+    #   `chat_type`（T2.6 加）是入站 chat.type 原值（private/group/supergroup/
+    #   channel，§0.2.4），handler 据它判「私聊豁免 / 群里要管理员」。
+    #   缺失时是 nil —— handler 必须把 nil 当**群**处理（未知不等于豁免）。
     #   handler 可直接调 `ctx[:api].send_text(...)` 回发（T2.4 的真实职责），
     #   也可只 `return "文本"` —— **返回 String 时由 router 代发**（带 thread 透传）。
     # @return [self]
@@ -355,11 +358,13 @@ module TelegramBot
 
       # --- 主轨 slash ---
       if text.start_with?("/")
-        return handle_slash(text, chat_id: chat_id, thread_id: thread_id, message: message)
+        return handle_slash(text, chat_id: chat_id, thread_id: thread_id,
+                                       message: message, chat_type: chat_type_of(chat))
       end
 
       # --- 辅助轨裸 ASCII 骰式 ---
-      handle_aux(text, chat_id: chat_id, thread_id: thread_id, message: message)
+      handle_aux(text, chat_id: chat_id, thread_id: thread_id,
+                          message: message, chat_type: chat_type_of(chat))
     end
 
     # ------------------------------------------------------------------
@@ -402,7 +407,7 @@ module TelegramBot
     # 解析 `/cmd`、`/cmd args`、`/cmd@BotName args`，落到已注册 handler。
     #
     # **未注册 → 静默**（群里别的 bot 可能注册了同名命令；我们无权抢）。
-    def handle_slash(text, chat_id:, thread_id:, message: nil)
+    def handle_slash(text, chat_id:, thread_id:, message: nil, chat_type: nil)
       cmd = parse_slash(text)
       return nil if cmd.nil? || cmd.name.empty?
 
@@ -411,7 +416,7 @@ module TelegramBot
 
       run_handler(:slash, handler, command: cmd,
                                  chat_id: chat_id, thread_id: thread_id,
-                                 message: message)
+                                 message: message, chat_type: chat_type)
     end
 
     # slash 解析（纯函数，无副作用）
@@ -441,7 +446,7 @@ module TelegramBot
     # ------------------------------------------------------------------
 
     # 整条消息匹配骰式语法才路由；不命中 → 静默。
-    def handle_aux(text, chat_id:, thread_id:, message: nil)
+    def handle_aux(text, chat_id:, thread_id:, message: nil, chat_type: nil)
       return nil unless aux_match?(text)
       return nil unless aux_track_enabled?(chat_id, thread_id)
 
@@ -450,7 +455,7 @@ module TelegramBot
 
       run_handler(:aux, handler, command: nil,
                               chat_id: chat_id, thread_id: thread_id,
-                              message: message,
+                              message: message, chat_type: chat_type,
                               text: text)
     end
 
@@ -484,7 +489,8 @@ module TelegramBot
     #
     # 错误兜底：handler 抛异常 → warn + 继续（不杀循环）。日志**只记结构性
     # 信息**（轨/命令/chat_id/异常类），**绝不记用户正文**。
-    def run_handler(kind, handler, command:, chat_id:, thread_id:, message:, text: nil)
+    def run_handler(kind, handler, command:, chat_id:, thread_id:, message:,
+                    text: nil, chat_type: nil)
       context = {
         router: self,
         api: @api,
@@ -496,6 +502,7 @@ module TelegramBot
         chat_id: chat_id,
         thread_id: thread_id,
         user_id: user_id_of(message),
+        chat_type: chat_type,
         message: message,
       }
 
@@ -572,6 +579,14 @@ module TelegramBot
     def user_id_of(message)
       from = message.respond_to?(:from) ? message.from : nil
       from&.id&.to_i
+    end
+
+    # 入站 chat.type 原值（T2.6：handler 判「私聊豁免 / 群里要管理员」）。
+    #
+    # **拿不到就返回 nil**（不是猜测值）：nil 必须被下游当作「群」处理——
+    # 未知不等于豁免。chat 不认 type（测试假身）时同样 nil。
+    def chat_type_of(chat)
+      chat.respond_to?(:type) ? chat.type&.to_s : nil
     end
 
     private

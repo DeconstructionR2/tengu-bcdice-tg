@@ -10,6 +10,15 @@
 -- 幂等契约：全部 CREATE TABLE/INDEX 带 IF NOT EXISTS → 可重复执行。
 -- 连接层（db/connection.rb）首次连接自动执行本文件。
 --
+-- ⚠️ **本文件不能给既有库加列**：`CREATE TABLE IF NOT EXISTS` 在表已存在时
+--   **整条建表语句被跳过**（连同其中的新列）。也就是说「在 schema.sql 里加一列」
+--   只对**新库**生效，线上已有的库会永远缺这一列 → 运行时才炸（no such column）。
+--   故本仓库的 schema 演进范式是**两条腿**（T2.6 确立首个实例）：
+--     ① 在本文件改表结构（保证新库一次建全）；
+--     ② 在 db/connection.rb 的 `Connection::COLUMN_ADDITIONS` 登记同一条
+--        ADD COLUMN（首连时由 `ensure_column` 对**旧库**补列，幂等）。
+--   漏了 ② 的症状：新库正常、旧库报 `no such column: xxx`（只在部署后才现形）。
+--
 -- 执行方式：db.execute_batch（sqlite3 gem 的多语句入口）。
 -- ⚠️ 不用 `db.execute`：它走 prepare/step 单语句路径，本文件的分号分隔多语句
 --   会被当成 SQL 片段报错。
@@ -17,13 +26,20 @@
 
 PRAGMA journal_mode=WAL;
 
--- 每群（每话题）设置：规则系统 ID。查找顺序 话题→群→全局默认
+-- 每群（每话题）设置：规则系统 ID + 辅助轨开关。查找顺序 话题→群→全局默认
 -- （§3 决6 / §13 第 5 项）。thread_id=0 即群级（forum 的 General 话题
 -- 恒为 1，E4 定案：0 与 1 都归群级作用域，见 db/settings.rb）。
+--
+-- aux_enabled（T2.6）：辅助轨（裸 ASCII 骰式）开关，1=开 0=关。
+--   **按群一份，不分话题**（计划 §6「每群 /settings 可关辅助轨」）：
+--   读写只走 thread_id=0 的群级行，话题内 /settings aux off 也写群级行。
+--   未设置过的群 = 1（默认开），由 db/settings.rb 的 DEFAULT_AUX_ENABLED 兜底。
+--   ⚠️ 旧库需经 db/connection.rb 的 COLUMN_ADDITIONS 补列（见本文件头部说明）。
 CREATE TABLE IF NOT EXISTS chat_settings (
   chat_id      INTEGER NOT NULL,      -- 64位, 群/超级群 id
   thread_id    INTEGER NOT NULL DEFAULT 0,  -- 0=群级默认; >0=forum 话题(§13第5项: 话题级切换第一版即含)
   game_system  TEXT NOT NULL DEFAULT 'NinjaSlayer2Ex',
+  aux_enabled  INTEGER NOT NULL DEFAULT 1,  -- 1=辅助轨开 0=关（T2.6；仅群级行有意义）
   updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (chat_id, thread_id)
 );

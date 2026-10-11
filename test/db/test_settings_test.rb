@@ -220,3 +220,183 @@ class TestSettings < Minitest::Test
     assert_nil @settings.fetch_row(CHAT_ID, TOPIC), "事务回滚后设置不应残留"
   end
 end
+
+# ============================================================================
+# aux_enabled（T2.6）：辅助轨开关，按群一份，不分话题
+#
+# 计划 §6 口径「每群 /settings 可关辅助轨」—— 与 game_system 的三级查找
+# **刻意不同**：规则系统可以话题级，开关只走群级行（db/settings.rb 头部
+# 「aux_enabled 只走群级行」一节有完整理由）。
+# ============================================================================
+class TestSettingsAuxEnabled < Minitest::Test
+  CHAT_ID = -1_000_000_000_123_456_789
+  OTHER_CHAT = -1_000_000_000_999_999_999
+  TOPIC = 88
+  ANOTHER_TOPIC = 99
+  NS1EX = "NinjaSlayerEx"
+
+  def setup
+    @conn = TenguDB::Connection.open(path: ":memory:")
+    @settings = TenguDB::Settings.new(@conn)
+  end
+
+  def teardown
+    @conn.close
+  end
+
+  # --- 默认值 -------------------------------------------------------------
+
+  def test_default_is_enabled_when_no_row_exists
+    assert TenguDB::Settings::DEFAULT_AUX_ENABLED
+    assert @settings.aux_enabled(CHAT_ID),
+           "没有任何行时默认开（辅助轨默认开着，少一个动作就少一次抢话风险）"
+  end
+
+  def test_default_matches_schema_column_default
+    # 常量与列默认值必须同，否则「库里有行 vs 没有行」两种群默认行为不一致
+    row = @conn.get_first_hash(
+      "SELECT dflt_value FROM pragma_table_info('chat_settings') WHERE name = 'aux_enabled'"
+    )
+    assert_equal "1", row["dflt_value"].to_s
+    assert_equal true, TenguDB::Settings::DEFAULT_AUX_ENABLED
+  end
+
+  # --- 读写往返 -----------------------------------------------------------
+
+  def test_write_and_read_round_trip
+    # 未设置过的群默认**开**（DEFAULT_AUX_ENABLED），所以从「开」翻到「关」，
+    # 再翻回「开」——两条边界都覆盖到。
+    assert @settings.aux_enabled(CHAT_ID), "起点应是默认开"
+
+    assert_equal false, @settings.set_aux_enabled(CHAT_ID, enabled: false)
+    refute @settings.aux_enabled(CHAT_ID)
+
+    assert_equal true, @settings.set_aux_enabled(CHAT_ID, enabled: true)
+    assert @settings.aux_enabled(CHAT_ID)
+  end
+
+  def test_set_accepts_several_truthy_falsy_shapes
+    [true, 1, "1"].each do |v|
+      @settings.set_aux_enabled(CHAT_ID, enabled: v)
+      assert @settings.aux_enabled(CHAT_ID), "入参 #{v.inspect} 应判为开"
+    end
+
+    [false, 0, "0"].each do |v|
+      @settings.set_aux_enabled(CHAT_ID, enabled: v)
+      refute @settings.aux_enabled(CHAT_ID), "入参 #{v.inspect} 应判为关"
+    end
+  end
+
+  def test_returns_boolean_not_integer
+    # 存储是整数 0/1，但对外必须是布尔——handler 的分支与 router 的
+    # `? true : false` 都依赖这个契约
+    assert_equal false, @settings.set_aux_enabled(CHAT_ID, enabled: 0)
+    assert_equal true, @settings.set_aux_enabled(CHAT_ID, enabled: 1)
+  end
+
+  # --- 只走群级（不分话题）------------------------------------------------
+
+  def test_written_in_topic_lands_on_group_row
+    @settings.set_aux_enabled(CHAT_ID, enabled: false, thread_id: TOPIC)
+
+    rows = @settings.entries_for_chat(CHAT_ID)
+    assert_equal 1, rows.size, "只该写一行（群级）"
+    assert_equal 0, rows.first["thread_id"].to_i
+    refute @settings.aux_enabled(CHAT_ID, thread_id: TOPIC),
+           "话题内也要读到群级的那份（每群一份）"
+  end
+
+  def test_topic_rows_do_not_override_group_value
+    # 手工往话题行灌一个 0（模拟历史数据/手改 DB）：**不应**影响生效值
+    @settings.set_aux_enabled(CHAT_ID, enabled: true)
+    @conn.execute(
+      "INSERT INTO chat_settings (chat_id, thread_id, aux_enabled) VALUES (?, ?, 0)",
+      [CHAT_ID, TOPIC]
+    )
+
+    assert @settings.aux_enabled(CHAT_ID, thread_id: TOPIC),
+           "话题行的值一律不读（每群一份，话题级开关是刻意不做的）"
+  end
+
+  def test_general_topic_reads_group_value
+    # E4：forum General 话题（thread_id=1）
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+
+    refute @settings.aux_enabled(CHAT_ID, thread_id: 1),
+           "General 话题应看到群级开关"
+  end
+
+  # --- 与 game_system 共存（互不覆盖）--------------------------------------
+
+  def test_aux_write_does_not_clobber_game_system
+    @settings.set_game_system(CHAT_ID, thread_id: 0, game_system: NS1EX)
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+
+    assert_equal NS1EX, @settings.game_system(CHAT_ID),
+                 "改辅助轨不该把规则系统带回列默认值"
+    row = @settings.fetch_row(CHAT_ID, 0)
+    assert_equal NS1EX, row["game_system"]
+    assert_equal 0, row["aux_enabled"].to_i
+  end
+
+  def test_game_system_write_does_not_reopen_aux
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+    @settings.set_game_system(CHAT_ID, thread_id: 0, game_system: NS1EX)
+
+    refute @settings.aux_enabled(CHAT_ID),
+           "改规则系统不该顺手把辅助轨打开（两个开关各自 DO UPDATE 自己那列）"
+  end
+
+  def test_both_writes_coexist_on_one_row
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+    @settings.set_game_system(CHAT_ID, thread_id: 0, game_system: NS1EX)
+
+    rows = @settings.entries_for_chat(CHAT_ID)
+    assert_equal 1, rows.size, "两个开关应共用群级那一行（UPSERT，不新增行）"
+    assert_equal NS1EX, rows.first["game_system"]
+    assert_equal 0, rows.first["aux_enabled"].to_i
+  end
+
+  # --- 隔离与删除 ---------------------------------------------------------
+
+  def test_switch_is_isolated_per_chat
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+
+    assert @settings.aux_enabled(OTHER_CHAT), "A 群关掉不该影响 B 群"
+  end
+
+  def test_deleting_group_row_restores_default
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+    assert @settings.delete(CHAT_ID, thread_id: 0)
+
+    assert @settings.aux_enabled(CHAT_ID),
+           "行被删后应回默认（开）——删行是 /settings 复位的语义"
+  end
+
+  def test_roundtrip_with_64bit_chat_id
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+
+    row = @settings.fetch_row(CHAT_ID, 0)
+    assert_equal CHAT_ID, row["chat_id"].to_i, "64 位 chat_id 往返不丢精度"
+    assert_equal 0, row["aux_enabled"].to_i
+  end
+
+  def test_entries_expose_aux_column
+    @settings.set_aux_enabled(CHAT_ID, enabled: false)
+
+    entry = @settings.entries_for_chat(CHAT_ID).first
+    assert entry.key?("aux_enabled"), "entries_for_chat 供 /settings 展示，应含该列"
+    assert_equal 0, entry["aux_enabled"].to_i
+  end
+
+  def test_write_rolls_back_inside_transaction
+    @conn.transaction(:immediate) do
+      @settings.set_aux_enabled(CHAT_ID, enabled: false)
+      raise "boom"
+    end
+    nil
+  rescue RuntimeError
+    assert @settings.aux_enabled(CHAT_ID), "事务回滚后开关不该残留"
+    assert_empty @settings.entries_for_chat(CHAT_ID)
+  end
+end

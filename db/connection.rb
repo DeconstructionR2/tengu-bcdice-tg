@@ -13,6 +13,8 @@
 #      不开则 schema 里的 `log_entries.log_id REFERENCES session_logs(id)`
 #      形同虚设（实测：默认插入孤儿行不报错）。这是 §15.5 E10 的落地点。
 #   4. **首次连接自动建表**：执行 db/schema.sql（幂等 CREATE IF NOT EXISTS）。
+#   5. **首次连接自动补列**：`ensure_column` 对既有库执行 ALTER TABLE ADD COLUMN
+#      （schema.sql 加不了列，见 apply_schema 与本文件下方 COLUMN_ADDITIONS）。
 #
 # 路径来源：`TelegramBot::Config.db_path`（.env 的 DB_PATH；容器
 # /app/data/tengu.db，本机开发 ./data/tengu.db）。**不在本文件另抄一份**
@@ -38,6 +40,30 @@ module TenguDB
 
     # 内存库哨兵（测试用）。sqlite3 gem 对该串特殊处理，不落盘。
     MEMORY = ":memory:"
+
+    # ==========================================================================
+    # schema 演进登记处（T2.6 确立的**首例**，此后加列一律同此办理）
+    # ==========================================================================
+    #
+    # 背景：`CREATE TABLE IF NOT EXISTS` 在表已存在时**整条跳过**，故在
+    # schema.sql 里加一列只对**新库**生效；部署前就建好的库会永远缺这一列，
+    # 直到某条 SQL 真的碰到它才报 `no such column: xxx`——而那一刻已经在生产。
+    #
+    # 故每次给表加列必须**同时**改两处（schema.sql 保证新库、这里保证旧库）。
+    # 缺任一条的症状：
+    #   - 漏 schema.sql → 全新部署直接建不出该列，一启动就炸；
+    #   - 漏本清单       → 旧部署一直好着，升级后才炸（最难查的一种）。
+    #
+    # 元素形态：[表名, 列名, "完整 ADD COLUMN 的列定义子句"]，例：
+    #   ["chat_settings", "aux_enabled", "INTEGER NOT NULL DEFAULT 1"]
+    # ALTER TABLE 不支持 IF NOT EXISTS（SQLite 至今没有），故靠**先探后加**
+    # 保证幂等（ensure_column）。加 NOT NULL 列时**必须**带 DEFAULT：
+    # 没有默认值的 ADD COLUMN 在有数据的表上会直接失败。
+    COLUMN_ADDITIONS = [
+      # T2.6：辅助轨开关（每群一份，只走群级行 thread_id=0）。
+      # 与 schema.sql 的列定义逐字一致——两处漂移会让新库旧库行为不同。
+      ["chat_settings", "aux_enabled", "INTEGER NOT NULL DEFAULT 1"]
+    ].freeze
 
     # 进程内连接登记表：{绝对路径或 MEMORY => Connection}。
     # 按**路径**分键而非全局单例——测试要能同时开多份内存库互不干扰。
@@ -96,6 +122,7 @@ module TenguDB
       @db = SQLite3::Database.new(@path)
       apply_pragmas
       apply_schema
+      apply_column_additions
     end
 
     # -- 基础操作 ------------------------------------------------------------
@@ -179,6 +206,56 @@ module TenguDB
       get_first_value("PRAGMA #{name}")
     end
 
+    # ----------------------------------------------------------------------
+    # schema 演进的公开面（测试与诊断用）
+    # ----------------------------------------------------------------------
+
+    # 某表的列名数组（按建表顺序）
+    #
+    # 走 `pragma_table_info(?)` **表值函数**而非 `PRAGMA table_info(x)` 语句：
+    # 前者接受绑定参数，故**表名不需要拼进 SQL 字符串**（与「值一律绑定」
+    # 的纪律同源）。PRAGMA 语句形式不接受绑定参数，只能拼串。
+    #
+    # @return [Array<String>] 表不存在时返回 []（不是异常——调用方多在探测）
+    def column_names(table)
+      row = get_first_value(
+        "SELECT group_concat(name) FROM pragma_table_info(?)", [table.to_s]
+      )
+      row.to_s.split(",").reject(&:empty?)
+    end
+
+    # 该表是否有这一列
+    def column?(table, column)
+      column_names(table).include?(column.to_s)
+    end
+
+    # 补一列（幂等：已在则什么也不做）
+    #
+    # 顺序要紧：先探**表**在不在（否则 ALTER 一个不存在的表会炸成
+    # "no such table"，掩盖真实问题），再探**列**在不在（已存在 → 直接
+    # no-op 返回 false，这正是幂等性的来源）。
+    #
+    # ⚠️ **表名/列定义是插值进 SQL 的**（值一律绑定）。安全前提同
+    #   Migration::TABLES：它们来自本文件 frozen 的 COLUMN_ADDITIONS 常量，
+    #   不含任何外部输入。**不要**把这个方法开放给用户输入。
+    #
+    # @param definition [String] ADD COLUMN 的列定义子句（不含列名）
+    # @return [Boolean] 本次是否**真的执行了**加列（false = 已存在或表不存在）
+    def ensure_column(table, column, definition)
+      return false unless table_exists?(table)
+      return false if column?(table, column)
+
+      execute("ALTER TABLE #{table} ADD COLUMN #{column} #{definition}")
+      true
+    end
+
+    def table_exists?(table)
+      get_first_value(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table.to_s]
+      ).to_i.positive?
+    end
+
     def memory?
       @path == self.class::MEMORY
     end
@@ -200,9 +277,36 @@ module TenguDB
     #
     # 用 execute_batch（多语句入口）而非 execute：后者走 prepare/step 单语句
     # 路径，本文件的分号分隔语句会被当成 SQL 片段报错。
+    #
+    # ⚠️ 本文件**只负责新库的完整结构**；既有库的加列走 apply_column_additions
+    #（`CREATE TABLE IF NOT EXISTS` 对已存在的表整条跳过，加进去的新列不会生效）。
     def apply_schema
       sql = File.read(SCHEMA_PATH)
       @monitor.synchronize { @db.execute_batch(sql) }
+    end
+
+    # 首次连接自动补列（T2.6 schema 演进的唯一起点）。
+    #
+    # 必须排在 apply_schema **之后**：新库此时已含全部列，全部 no-op；
+    # 旧库缺的列在这里补上。顺序反过来会给尚未建表的库补列失败。
+    #
+    # 单条失败**不让连接建立失败**：数据库能被打开、其余表可用，比启动即
+    # 崩掉更有用（§9 的「部署期故障越早炸越好」针对 DB_PATH/权限这类
+    # 根本用不了的情况；缺列是可用性问题，且被记进日志可被看见）。
+    # 注意这里**不**把表名/列名打进 warn 正文之外的地方——它们是常量不是输入。
+    def apply_column_additions
+      COLUMN_ADDITIONS.each do |table, column, definition|
+        added = ensure_column(table, column, definition)
+        warn_line("[db] 表 #{table} 已补列 #{column}（schema 演进，见 COLUMN_ADDITIONS）") if added
+      rescue StandardError => e
+        warn_line("[db] 补列失败（表=#{table} 列=#{column}）：#{e.class}（消息不打印）")
+      end
+    end
+
+    def warn_line(message)
+      warn(message)
+    rescue StandardError
+      nil # 日志器坏了也不能让建库失败
     end
   end
 end
