@@ -47,6 +47,25 @@ data = JSON.parse(File.read(JSON_PATH, encoding: "UTF-8"))
 #      · 计划 §13 第 3 项「1版 9 表全搬 → NinjaSlayerEx」
 #      · 计划 §5 表内「1版 9 表」清单逐条对齐（该清单含 wasshoi_1、**不含** サツバツ_1）
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 1.5 表文本内嵌命令引用改写（2026-10-11 用户拍板方案 B）
+#
+# 天狗原文里的 `/nd <日文表名>` / `/fnd …#n` 命令引用，在本项目纯 ASCII 定案下
+# 指向不存在的命令 → 生成期机械改写为我们的 ASCII 键。
+# 纪律：JSON 锚点（tengu_tables.json）保持逐字节保真不动；改写只在 yml 生成期
+# 发生，映射表在此声明（可审计），自检按 transform(JSON) 比对。
+# 全量扫描实证（2026-10-11）：表文本内真实命令引用仅此 2 处；『サツバツ！』等
+# 书名号内为规则散文（非命令引用）逐字保留，diehardtales.com 链接为文章引用不动。
+# ---------------------------------------------------------------------------
+TEXT_REWRITE = {
+  "/nd NSRS発狂,d" => "NSRS_D",
+  "/fnd 初期ジツ系統#n" => "NJI@n",
+}.freeze
+
+def rewrite_items(items)
+  items.map { |t| TEXT_REWRITE.reduce(t) { |s, (from, to)| s.gsub(from, to) } }
+end
+
 MAPPING = [
   # ===================== 2版 → NinjaSlayer2Ex（12 张）========================
   { ja: "nsrs発狂", kind: :nsl2ex, key: "NSRS", status: :planned,
@@ -223,7 +242,7 @@ MAPPING.each do |m|
   end
 
   name = "#{m[:ja]}(#{type}) ＞ "
-  ns["table"][key] = { "name" => name, "type" => type, "items" => src["items"].dup }
+  ns["table"][key] = { "name" => name, "type" => type, "items" => rewrite_items(src["items"]) }
   stats[m[:kind]] += 1
 
   ledger << {
@@ -307,7 +326,7 @@ unless options[:dry_run]
         selfcheck[:mismatched] << "#{m[:ja]} → #{rel}:#{m[:key]} 缺失"
         next
       end
-      selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} items 逐字不一致" if got["items"] != src["items"]
+      selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} items 逐字不一致" if got["items"] != rewrite_items(src["items"])
       idx = src["data_index"].map(&:to_i)
       want_type = to_bcdice_type(src["dice"]["a"] || src["dice"].values.first)
       selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} type 应为 #{want_type} 实为 #{got['type']}" if got["type"] != want_type

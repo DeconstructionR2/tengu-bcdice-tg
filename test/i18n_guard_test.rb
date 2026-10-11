@@ -116,4 +116,17 @@ class TestI18nGuard < Test::Unit::TestCase
       assert_equal([], dup, "#{const} 在已注册游戏系统中不唯一（#{dup.inspect}）")
     end
   end
+
+  # kimi T1.3 评审 P1 守卫：Ex 在 SORT_KEY 排序中必须**紧邻其父类**
+  # （初版 NinjaSlayerEx 的「TRPGかちょう」实测落到 2版拡張 之后——
+  #  'か' > '2'，注释意图与事实相反；改「TRPG1かちょう」后本断言锁定）
+  def test_ex_sorts_immediately_after_parent
+    sorted_ids = BCDice.all_game_systems.sort_by { |g| g::SORT_KEY }.map { |g| g::ID }
+    EX_CLASSES.each_key do |id|
+      parent_id = id.sub(/Ex\z/, "")
+      assert_equal(sorted_ids.index(parent_id) + 1, sorted_ids.index(id),
+                   "#{id} 未紧邻父类 #{parent_id}（实际顺序段: " \
+                   "#{sorted_ids.select { |i| i.start_with?('NinjaSlayer') }.inspect}）")
+    end
+  end
 end

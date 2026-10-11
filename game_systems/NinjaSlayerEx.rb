@@ -22,9 +22,11 @@ module BCDice
       NAME = "ニンジャスレイヤーTRPG 拡張"
 
       # ゲームシステム名の読みがな
-      # 「…TRPG」< 「…TRPGかちょう」，故排在其后；又 < 「…TRPG2」，
-      # 在 bot 列表里 1版 → 1版拡張 → 2版 → 2版拡張 连续排列。
-      SORT_KEY = "にんしやすれいやあTRPGかちょう"
+      # 排序实证（2026-10-11）：「…TRPG」<「…TRPG1かちょう」<「…TRPG2」<「…TRPG2かちょう」
+      # （'1'<'2'<'か'），故 1版拡張 用「TRPG1かちょう」——bot 列表呈
+      # 1版 → 1版拡張 → 2版 → 2版拡張 连续排列（kimi T1.3 评审 P1：
+      # 初版「TRPGかちょう」实测落到 2版拡張 之后，注释与事实相反）。
+      SORT_KEY = "にんしやすれいやあTRPG1かちょう"
 
       register_prefix_from_super_class()
     end
