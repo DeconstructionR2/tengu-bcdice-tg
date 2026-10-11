@@ -69,7 +69,6 @@ module TelegramBot
       CB_EXPIRED = "这条暗骰已过期或已公开过（记录已删除）。"
       CB_DENIED = "只有掷骰的本人可以公开这条暗骰。"
       CB_SENDING = "正在公开…"
-      CB_DONE = "已公开。"
 
       # 规则系统不可用（引擎里没有这个 ID：换 gem 版本 / 手改 DB）
       SYSTEM_UNAVAILABLE = "当前规则系统不可用（可能已被移除）。请用 /system <其他ID> 切换。"
@@ -169,8 +168,13 @@ module TelegramBot
         end
 
         begin
-          # 普通消息（非 ephemeral）——**任何客户端都看得见**，这正是「公开」的含义
-          api.send_text(secret.chat_id, secret.result_text, thread_id: secret.thread_id)
+          # 普通消息（非 ephemeral）——**任何客户端都看得见**，这正是「公开」的含义。
+          # thread_id 归一（kimi T3.1 评审提案 #2）：库里群级存 0，而 send_one 的
+          # 守卫是「if thread_id」——Ruby 里 0 为真，不归一会把 message_thread_id: 0
+          # 拍上 wire（正常路径只透传入站非 nil 值；forum 群内 0 不是合法话题 id，
+          # 有 400 风险）。0 → nil。
+          public_thread_id = secret.thread_id.positive? ? secret.thread_id : nil
+          api.send_text(secret.chat_id, secret.result_text, thread_id: public_thread_id)
         rescue StandardError => e
           # 发送失败**不删行**：按钮还在、/secret last 还能重取，本次公开未生效
           warn_line("[secret] 公开暗骰发送失败（id=#{id} chat_id=#{secret.chat_id}）：#{e.class}")

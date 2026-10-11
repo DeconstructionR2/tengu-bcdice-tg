@@ -608,4 +608,39 @@ class TestSecretDiceRouting < Minitest::Test
     assert_equal "q-1", fake.answered.first[:callback_query_id]
     assert_equal "ok", fake.answered.first[:text]
   end
+
+  def test_default_answer_channel_delivers_alert_flag_to_wire
+    # kimi T3.1 评审提案 #1 的回归钉：router 层曾自行拼 wire 参数 show_alert:，
+    # 撞 TelegramApi 的关键字形参（alert:）→ ArgumentError 被 rescue 吞掉，
+    # 拒绝路径（唯一 alert:true 场景）应答静默丢失、客户端永久转圈。
+    api, fake, = build_api
+    router = TelegramBot::Router.new(api: api, bot_username: "x",
+                                     logger: Logger.new(IO::NULL))
+    router.register(:callback_query) do |ctx|
+      ctx[:answer_callback_query].call("拒绝", alert: true)
+      nil
+    end
+
+    router.dispatch(callback_update(data: "sec:#{'c' * 16}"))
+
+    assert_equal 1, fake.answered.size, "alert:true 也必须真的送达（不再 ArgumentError）"
+    assert_equal true, fake.answered.first[:show_alert],
+                 "alert 语义必须经 TelegramApi 转成 wire 参数 show_alert"
+    assert_equal "拒绝", fake.answered.first[:text]
+  end
+
+  def test_public_send_omits_thread_id_for_group_level_scope
+    # kimi T3.1 评审提案 #2 的回归钉：非 forum 群（入站无 thread）掷骰存 0，
+    # 公开时不得把 message_thread_id: 0 拍上 wire（Ruby 0 为真，forum 群 400 风险）
+    @router.dispatch(message_update(text: "/secret SB@6"))
+    record, = @store.latest_for(chat_id: CHAT_ID, user_id: USER)
+    assert_equal 0, record.thread_id, "群级作用域应存 0"
+    @fake.sent_messages.clear
+
+    @router.dispatch(callback_update(data: TenguDB::Secrets.callback_data(record.id)))
+
+    assert_equal 1, plain_sends.size, "公开应发出一条普通消息"
+    refute plain_sends.first.key?(:message_thread_id),
+           "群级（0）公开不得带 message_thread_id 上 wire"
+  end
 end

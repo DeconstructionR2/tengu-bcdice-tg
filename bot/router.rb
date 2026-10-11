@@ -718,11 +718,12 @@ module TelegramBot
     # （那些对一条 toast 是纯开销；而配速限流是按消息计的，answerCallbackQuery
     # 不计入群消息速率）。
     def default_answer_callback(query_id, text = nil, alert: false)
-      params = { callback_query_id: query_id }
-      params[:text] = text if text && !text.to_s.empty?
-      params[:show_alert] = true if alert
-
-      @api.answer_callback_query(**params)
+      # 只传语义参数——show_alert 是 wire 层名字，转换归 TelegramApi 层
+      # （telegram_api.rb answer_callback_query 内部完成）。本层若自行拼 wire
+      # 参数（show_alert:）会撞 TelegramApi 的关键字形参 → ArgumentError，再被
+      # answer_callback_query 的 rescue 吞掉、answered 已置位 ensure 不补答——
+      # 拒绝路径的应答静默丢失、客户端永久转圈（kimi T3.1 评审提案 #1，已复现）。
+      @api.answer_callback_query(callback_query_id: query_id, text: text, alert: alert)
     end
 
     # 入站 chat.type 原值（T2.6：handler 判「私聊豁免 / 群里要管理员」）。

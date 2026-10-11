@@ -263,4 +263,52 @@ class TestRawApiCall < Minitest::Test
     assert_raises(NoMethodError) { api.register_main_commands }
     assert_empty http.calls, "业务 bug 不得被 setMyCommands 降级路径吞掉"
   end
+
+  # --- answer_callback_query 封装分支（T3.1，kimi 评审提案 #3 补盲）-----------
+
+  def test_answer_callback_query_rejects_blank_id
+    api = api_with(BotTestHelper::FakeHttpExecutor.new)
+
+    assert_raises(ArgumentError) { api.answer_callback_query(callback_query_id: "") }
+  end
+
+  def test_answer_callback_query_raises_send_error_on_api_rejection
+    err = Telegram::Bot::Exceptions::ResponseError.allocate
+    # 构造一个最小可用的 ResponseError（与 send 侧测试同款手法）
+    response = Struct.new(:body).new('{"ok":false,"description":"query is too old"}')
+    err.define_singleton_method(:response) { response }
+    err.define_singleton_method(:message) { "Telegram API error" }
+
+    fake = BotTestHelper::FakeApi.new(raise_on: { answer_callback_query: err })
+    clock = BotTestHelper::FakeClock.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                       api_client: BotTestHelper::FakeClient.new(fake),
+                                       sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                       clock: clock)
+
+    raised = assert_raises(TelegramBot::SendError) do
+      api.answer_callback_query(callback_query_id: "q1", text: "x", alert: true)
+    end
+    assert_match(/query is too old/, raised.message)
+    refute_match(/#{Regexp.escape(FAKE_TOKEN)}/, raised.message, "SendError 不得泄漏 token")
+  end
+
+  def test_answer_callback_query_whitelist_miss_falls_back_to_raw
+    # FakeGemLikeApi 的 ENDPOINTS 白名单不含 answerCallbackQuery → 模拟 gem 未收录
+    gem_like = BotTestHelper::FakeGemLikeApi.new
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                       api_client: BotTestHelper::FakeClient.new(gem_like),
+                                       sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                       clock: clock,
+                                       http_executor: http)
+
+    api.answer_callback_query(callback_query_id: "q9", text: "ok", alert: true)
+
+    assert_equal 1, http.calls.size, "gem 白名单缺失时应降级走 raw 通道"
+    assert_match(%r{/answerCallbackQuery\z}, http.last_url)
+    assert_equal "q9", http.last_body[:callback_query_id]
+    assert_equal true, http.last_body[:show_alert], "alert 语义须转成 wire 参数 show_alert"
+  end
 end
