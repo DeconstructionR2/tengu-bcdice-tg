@@ -9,8 +9,6 @@
 # 各项通过/失败汇总输出；失败不 throw，便于报告。
 # ============================================================================
 
-$LOAD_PATH.unshift(File.expand_path("..", __dir__))
-
 require "bcdice"
 require "bcdice/game_system"
 require "bcdice/translate"
@@ -22,8 +20,8 @@ require "bcdice/translate"
 #     - 父类 NinjaSlayer2 / NinjaSlayer 不受污染，仍可发现且 ID 一致
 # ---------------------------------------------------------------------------
 def check_plugin_registration
-  require_relative "../game_systems/NinjaSlayer2Ex.rb"
-  require_relative "../game_systems/NinjaSlayerEx.rb"
+  require_relative "../game_systems/NinjaSlayer2Ex"
+  require_relative "../game_systems/NinjaSlayerEx"
 
   results = []
 
@@ -53,7 +51,7 @@ def check_plugin_registration
               BCDice::GameSystem::NinjaSlayer2Ex < BCDice::GameSystem::NinjaSlayer2,
               "ancestors include? #{BCDice::GameSystem::NinjaSlayer2Ex.ancestors.include?(BCDice::GameSystem::NinjaSlayer2)}"]
 
-  results << ["① prefixes_pattern 含父类所有 prefix（UH/[KENHU]/SB/WS/WSE/NRS）",
+  results << ["① prefixes 继承父类全量前缀（逐元素相等；regex 门槛由 runner command_pattern 断言覆盖）",
               BCDice::GameSystem::NinjaSlayer2 == BCDice::GameSystem::NinjaSlayer2Ex.superclass &&
                 (BCDice::GameSystem::NinjaSlayer2Ex.prefixes ==
                  BCDice::GameSystem::NinjaSlayer2.prefixes),
@@ -77,8 +75,10 @@ end
 def check_i18n_load_path
   # 必须抢在首次 translate 之前；按理 require "bcdice" 后还没人 translate。
   # 强制 reload! 确保 i18n backend 接受新 yml。
+  # 去重注入（kimi-code T1.1 评审 P4）：防重复执行时 load_path 累积
   I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-  I18n.load_path.concat(Dir[File.expand_path("../i18n/**/*.yml", __dir__)])
+  new_i18n_yml = Dir[File.expand_path("../i18n/**/*.yml", __dir__)]
+  I18n.load_path.concat(new_i18n_yml - I18n.load_path)
 
   results = []
 

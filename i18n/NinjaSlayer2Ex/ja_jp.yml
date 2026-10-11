@@ -3,10 +3,9 @@
 # 目的：证明当我们把本仓库 i18n/ 目录注入 I18n.load_path 后，
 # BCDice::GameSystem::NinjaSlayer2Ex 实例可以命中 NinjaSlayer2Ex.* 键。
 #
-# 内容故意取自上游 NinjaSlayer2/ja_jp.yml 的 SATSUBATSU 表文本
-# （逐字引用，纯文本复制，命名归源：见 references/src/BCDice/i18n/NinjaSlayer2/ja_jp.yml）
-# —— 仅复制三行（第 1～3 项）以减少噪声。后续 T1.2 数据管线会用脚本完整复制。
-# 这里我们用它来给 NinjaSlayer2Ex 一个独有的键空间，证明子类的 i18n 加载不会污染
+# 内容为 6 条占位文本（"SPIKE_DUMMY n"），仅作机制验证——不代表真实表文本；
+# 真实天狗表文本由 T1.2 数据管线从钉版快照逐字提取（scripts/extract_tengu_data.mjs）。
+# 用它给 NinjaSlayer2Ex 一个独有的键空间，证明子类的 i18n 加载不会污染
 # 上游 gem，也不会被超类 NinjaSlayer2 命中（**两个键空间隔离**）。
 #
 # 格式锁定（与上游对齐，见 references/src/BCDice/i18n/NinjaSlayer2/ja_jp.yml + §15.5 V7）：

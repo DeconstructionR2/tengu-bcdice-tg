@@ -7,7 +7,7 @@
 #   - test:default  跑 test/test_ext_game_system_commands.rb（T1.1④ 自研 runner）
 #   - spike         跑 test/spike_t1_1.rb（四项机制一次性验证）
 #   - test          上面两个连跑
-#   - test:target   单文件筛选（TEST_TARGET=NinjaSlayer2 rake test:default 等）
+#   - 单文件筛选走环境变量：TEST_TARGET=NinjaSlayer2 rake test
 #
 # 设计要点：
 #   - 全用 bundle exec，避免误用系统 ruby；
@@ -22,7 +22,7 @@ require "rake/testtask"
 Rake::TestTask.new(:default) do |t|
   t.libs << "test"
   t.libs << "."
-  t.test_files = FileList["test/test_ext_game_system_commands.rb"]
+  t.test_files = FileList["test/test_ext_game_system_commands.rb", "test/i18n_guard_test.rb"]
   t.warning = false
   t.verbose = false
 end
@@ -33,7 +33,7 @@ task test: :default
 # spike 单独跑
 desc "跑 T1.1 四项机制一次性 spike（test/spike_t1_1.rb）"
 task :spike do
-  ruby "-Ilib", "-Itest", "test/spike_t1_1.rb"
+  ruby "-Itest", "test/spike_t1_1.rb"
 end
 
 # rake test 时默认连跑 spike + 引擎层测试，回归一气呵成

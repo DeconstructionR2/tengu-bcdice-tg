@@ -11,9 +11,10 @@
 #   1. 去掉 simplecov（我们要的是 runner，不跑覆盖率）；
 #   2. 路径：相对仓库根；可用 TEST_TARGET 环境变量筛选单文件/单 system；
 #   3. 在 require "bcdice" 后立即加载本仓库 game_systems/* 与本仓库 i18n/，
-#      保持与 spike_t1_1.rb 同一套初始化序列（顺序：reload! → load_path.concat）；
-#   4. 加入 inherits: 子类同样走 NinjaSlayer2 的用例（用 NinjaSlayer2Ex 复跑），
-#      验证子类化不破坏父类的 toml 用例（= T1.1③ 的 toml 形式重复确认）。
+#      保持与 spike_t1_1.rb 同一套初始化序列（顺序：reload! → load_path 去重注入）；
+#   4. 子类对照网：test/data/ 内置放 NinjaSlayer2Ex.toml / NinjaSlayerEx.toml
+#      （上游用例仅改 game_system 字段的孪生副本），默认全量跑时子类复跑父类全部
+#      用例，验证子类化不破坏父类行为（= T1.1③ 的 toml 形式重复确认）。
 #
 # 跑法：
 #   bundle exec rake test                 # 跑 test/data/*.toml 全量
@@ -29,7 +30,9 @@ require "bcdice/translate"
 
 # 本仓库扩展加载（顺序对齐 spike_t1_1.rb）
 I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-I18n.load_path.concat(Dir[File.expand_path("../i18n/**/*.yml", __dir__)])
+# 去重注入（kimi-code T1.1 评审 P4）：防长进程/重复 require 时 load_path 单调增长
+new_i18n_yml = Dir[File.expand_path("../i18n/**/*.yml", __dir__)]
+I18n.load_path.concat(new_i18n_yml - I18n.load_path)
 
 # 加载本仓库 game_systems 下的外部扩展类。
 EXT_GAME_SYSTEMS = File.expand_path("../game_systems", __dir__)
@@ -42,8 +45,7 @@ class TestExtGameSystemCommands < Test::Unit::TestCase
     # 目标文件：
     #   - 默认 test/data/*.toml
     #   - 环境变量 TEST_TARGET，可为逗号分隔的多值；不加扩展名则补 .toml；
-    #     若目标是 NinjaSlayer2 或 NinjaSlayer，则自动追加 NinjaSlayer*Ex 版本，
-    #     因为我们的子类应该跑过全部父类用例（这是 T1.1③ toml 形式的副产物）。
+    #     显式指定时只跑指定文件（不自动孪生子类对照——双跑交给默认全量流程）。
     def target_files
       env_target = ENV["TEST_TARGET"]
       unless env_target
