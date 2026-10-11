@@ -30,7 +30,7 @@
 #   - references/src/TenguDiceBot/TenguDiceBot/classes/SearchTableDiceroll.js
 #       +x 解析原文（Number() + Math.floor，负数走 else 分支替换）
 #   - references/src/TenguDiceBot/TenguDiceBot/classes/dice.js
-#       d3+3+x 的真实掷法（split(/\+/) → ["d3","3","3"]，末位空串不掷）
+#       d3+3+x 的真实掷法（split(/\+/)：无補正时 ["d3","3"]，有補正时 ["d3","3","x"]）
 #   - docs/spike-t1.1-report.md         四机制实证与坑点
 #   - docs/t1.2-coverage-audit.md §5.1  天狗绝对索引 vs BCDice 相对索引
 #   - references/extracted/i18n_key_ledger.yml  NSRS/SBX/WSX/KR* 逐表登记
@@ -103,6 +103,7 @@ module BCDice
         - 素の `KRS` は `KRS_A` と同じ（ショートカット省略時は A とみなします）。
         - `_A` / `_B` / `_C` / `_D` でダイス型を選びます。
         - `@+n` / `@-n` で補正値を選びます（負の値も指定できます）。
+          小数は向下取整（`@1.9` → +1。天狗の `Number()+Math.floor` と同じ语义）。
 
         ダイス型：
         - KRS（ソウカイヤ）：A…1D3、B…1D6、C…1D6+1、D…2D6
@@ -357,7 +358,14 @@ module BCDice
         # 未指定（nil）→ 0。天狗对非数字同样当 0，但我们的正则已限定
         # `@` 后必须是数字串，非数字形态直接不匹配 → 不响应（比天狗严格，
         # 避免把 `KRS_A@abc` 当成裸 KRS_A 静默掷骰）。
-        addition = addition_s.nil? ? 0 : addition_s.to_f.floor
+        # kimi P1-1：超长数字串 to_f → ±Infinity——**先**做有限性守卫再 floor
+        # （Infinity.floor 本身抛 FloatDomainError，守卫放 floor 后则来不及）。
+        # 非有限值按符号饱和到 ±10**6（语义等价于直接钳到 datarange 端点）。
+        addition = 0
+        if addition_s
+          f = addition_s.to_f
+          addition = f.finite? ? f.floor : (f.negative? ? -(10**6) : 10**6)
+        end
 
         # 骰型常量 + 用户補正 一并计入绝对出目（天狗 diceStr 字符串拼接的等价物）
         sum = @randomizer.roll_sum(spec[:times], spec[:sides]) + spec[:bonus] + addition
@@ -373,9 +381,12 @@ module BCDice
         items = translate("NinjaSlayer2Ex.table.#{school}.items")
         body = items[clamped - KARMAROND_TABLE_MIN_INDEX]
         # 理论上钳制后不会越界（items 长度 == datarange 跨度），
-        # 但 yml 若被手工改动长度会失配——这里兜底成端点项而非 nil，
-        # 与铁律①的「绝不静默 nil」一致。
-        body = items.first if body.nil?
+        # 但 yml 若被手工改动长度会失配——兜底**按钳制方向取端点**而非 nil
+        # （kimi P2-1：固定 items.first 在上溢时取错端点且掩盖失配；
+        # 失配由 test/ledger_consistency_test.rb 常驻断言兜底）。
+        if body.nil?
+          body = clamped >= range[:max] ? items.last : items.first
+        end
 
         "#{karmarond_table_label(school)}(#{spec[:expr]}) ＞ #{face_mark} ＞ #{body}"
       end
