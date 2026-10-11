@@ -21,7 +21,7 @@
 | 数据卷（宿主侧） | `/opt/<project>/data` | 容器挂载为 `/app/data`：`tengu.db*` + `.env` |
 | 备份目录 | `/opt/backups/<project>/` | `tengu-YYYYMMDD.db` ×7；属主 <deploy-user>、mode 700 |
 | 备份互斥锁 | `/opt/<project>/.backup.lock` | `scripts/backup.sh` 的 flock 自互斥（env `TENGU_BACKUP_LOCK` 可覆盖） |
-| 备份日志 | `/opt/<project>/backup.log` | cron 追加重定向（脚本自身不投递，见 §4.1） |
+| 备份日志 | `/opt/<project>/backup.log` | cron 追加重定向（脚本自身不投递，见 §4.1）；**日志是时间序列：判断「今日是否已备」以 /opt/backups 实物为准，日志只作旁证** |
 | 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 88.3MB content；tag 纪律见 §1.4 |
 | 容器名 | `tengu-bcdice-tg` | T4.5 上线后存在；**当前（上线前）无容器在跑** |
 | 证据目录 | `/opt/<project>/t4.1-evidence/`、`t4.2-evidence/` | 构建/冒烟/备份验证日志（机器本地，不入库） |
@@ -330,8 +330,8 @@ sudo docker image prune -f           # 换版构建后回收中间层（T4.1 实
 | **409 双轮询** | 见 §5 红线：同 token 出现了第二个 getUpdates 消费者。症状 = 容器 `RestartCount` 持续上涨 / dev 进程突然死亡；日志异常类 `Telegram::Bot::Exceptions::ResponseError` | t4.1 §5.1（gem 409 崩溃链源码实证） |
 | **ephemeral 消失**（暗骰结果/按钮不见了） | 已知行为：ephemeral 消息约 25 分钟后消失（T2.2 客户端实测）。补救：本人打 `/secret last` 重取（复用原行、本人限定）；要留痕就用「公开」按钮走常规消息 | t2.2 报告、t3.1 报告 |
 | **导出失败**（`/log end` 回执报发送失败） | 回执措辞「导出文件发送失败——录制数据已保留」时数据都在库里（`/log list` 可见）；查 logs 里 `SendError`（网络抖动/请求被 400）。重发入口未实现（backlog `/log export`），目前只能人工从 DB 导 | t3.5 报告 §4 决策 11、§6.3 |
-| **DB 锁**（`BusyException` 结构性 warn） | 设计口径 = 单进程单连接（`db/connection.rb`）。确认没有第二个进程连同一库：`pgrep -af 'bot/main.rb'`；`sudo lsof /opt/<project>/data/tengu.db`。典型来源 = dev 进程与容器共用同一 data 目录 | `db/connection.rb` 注释、t3.2 评审 |
-| 库损坏（`integrity_check` 不过） | 停容器 → §3.4 恢复演练步骤 | t4.2 §2 |
+| **DB 锁**（`BusyException` 结构性 warn） | 设计口径 = 单进程单连接（`db/connection.rb`）。确认没有第二个进程连同一库：`pgrep -af 'bot/main.rb'`；`sudo lsof /opt/<project>/data/tengu.db*`（连 `.db-wal`/`.db-shm` 挂件一起查——dev 进程可能只持挂件句柄）。典型来源 = dev 进程与容器共用同一 data 目录 | `db/connection.rb` 注释、t3.2 评审 |
+| 库损坏（`integrity_check` 不过） | 停容器 → §3.4 恢复演练步骤 | `scripts/backup.sh` 的 integrity_check 守卫（坏备份不顶替好备份）、t4.2 §5 |
 | token 类启动报错 | bot 只报键名不报值：核对 `/opt/<project>/data/.env` 是否就位、`TENGU_ENV` 分支是否与 token 匹配、token 是否被吊销 | `bot/config.rb` |
 
 ---
@@ -353,7 +353,8 @@ Timeout/ConnectionFailed；`bot/main.rb` 对 `listen` 无兜底 → **进程直�
 PGREP_PID=$(pgrep -f 'bot/main.rb')   # ① 找到 dev 进程（pid 会变，别写死）
 kill -STOP "$PGREP_PID"               # ② 冻结（SIGSTOP，不是 kill）
 sleep 35                              # ③ 等在途长轮询租约到期（gem 内 timeout=20s，
-                                      #    此后 Telegram 侧消费者数 = 0）
+                                      #    此后 Telegram 侧消费者数 ≈ 0——T4.1 实证
+                                      #    经验值，非数学保证；更长阻塞场景要等更久）
 # ④ 起容器（独占轮询）→ 验证 → 删容器 → 确认无消费者
 kill -CONT "$PGREP_PID"               # ⑤ 恢复（读掉缓冲空响应、立即重新轮询）
 ```

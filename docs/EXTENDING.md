@@ -74,20 +74,39 @@ TEST_TARGET=NinjaSlayer2Ex,NinjaSlayerEx bundle exec rake test   # 只跑两个 
 ### 2.1 自动注册机制（时序，别打乱）
 
 ```
-EngineBootstrap.bootstrap!
-  ① I18n.backend.reload!                       # 让下次 translate 重载全量 load_path
-  ② I18n.load_path.concat(本仓库 i18n yml - 已有)  # 去重注入
-  ③ Dir[game_systems/*.rb].sort 逐个 require     # 类定义进 BCDice::GameSystem 命名空间
+EngineBootstrap.bootstrap!（默认生产路径，engine_bootstrap.rb:78-95）
+  ① I18n.load_path.concat(本仓库 i18n yml - 已有)  # 去重注入
+  ② Dir[game_systems/*.rb].sort 逐个 require        # 类定义进 BCDice::GameSystem 命名空间
+  ③ I18n.backend.reload!（**仅首调，且在最后**）     # 让下一次 translate 读全两份 yml
        ↓
 BCDice.all_game_systems / game_system_class("YourId") 即可发现（spike ① 实证）
        ↓
 bot 侧 /system <ID> 走 EngineResolver → BCDice.game_system_class（**ID 大小写敏感**）
 ```
 
-所以「加系统」= **加文件**（+ 可选 yml + toml 测试），不需要改任何注册表、
-不需要改上游。
+⚠️ 顺序铁律（kimi T4.3/4.4 评审 E1）：reload **必须在注入之后、且在序列最后**
+（bootstrap! 默认 `reload_backend: false`，首调内部在末尾 reload 一次）。
+自行脚本化时若在 require 之前 reload：gem 内 yml 已读、本仓库 yml 未注入 →
+全量 MissingTranslationData（spike-t1.1-report §2 坑点 A 的原始失败路径）。
+另：`bootstrap!(reload_backend: true)` 是测试态的强制重载路径，顺序与上图不同，
+别混为一谈。
+
+⚠️ 列举系统名的雷（评审 E2）：不要写 `BCDice.all_game_systems.map(&:ID)`——
+上游有的系统**没有 ID 常量**（实测 FutariSousa_Korean 会 NoMethodError；仓库
+dice.rb:70-74 的同款写法靠 rescue 兜成空列表，不崩但静默）。要列举先过滤
+`const_defined?(:ID)`；只要确认「能不能用」，优先 `game_system_class("YourId")`
+单点查询（找不到返回 nil）。
+
+所以「加系统」= **加文件**（+ 可选 yml + toml 测试）+ **扩 i18n 守卫白名单**
+（`test/i18n_guard_test.rb` 的 `ALLOWED_TOP`——你的新命名空间不加进白名单，
+`rake verify` 当场红；评审 E3：这条不是可选项，与「加文件」并列必做）。
+不需要改上游、不需要改引擎注册表。
 
 ### 2.2 最小可跑示例（骨架）
+
+⚠️ `DiceBot` 自带默认 ID/NAME/SORT_KEY/HELP_MESSAGE 四常量——**忘覆盖会沿用
+'DiceBot' 这一名字**（评审 E6）。四常量必须全部重写（骨架里已逐个标出）。
+仓库实战均走「继承既有系统」（`NinjaSlayer2Ex < NinjaSlayer2`），优先参考它。
 
 ```ruby
 # game_systems/MyDiceBot.rb —— 骨架（与 NinjaSlayer2Ex.rb 同构的精简版）
@@ -103,7 +122,7 @@ module BCDice
       HELP_MESSAGE = "MYS ：あいさつを返す"  # 继承路线：parent_help + extension_help 拼接（见下）
 
       # 全部前缀注册**在类体内一次性完成**（prefixes 首次 eval/command_pattern 调用即冻结，
-      # 过后注册 = FrozenError；上游 base.rb:35-47，spike-t1.1 §5.7）：
+      # 过后注册 = FrozenError；上游 base.rb:35-47，spike-t1.1 §5 第 7 项）：
       #   继承路线先：register_prefix_from_super_class()
       #   然后追加新前缀（可多个）：
       register_prefix("MYS")
@@ -128,7 +147,7 @@ end
 `scripts/json_to_i18n.rb`）。
 
 配 toml 用例 `test/data/MyDiceBot.toml`（格式 = 上游测试框架，real 样例见
-`test/data/NinjaSlayer2Ex.toml` 的 SBX 用例块（L596 起））：
+`test/data/NinjaSlayer2Ex.toml` 的 SBX 用例区段（注释头 L484 起，首条 input="SBX" 在 L599））：
 
 ```toml
 [[ test ]]
@@ -155,7 +174,7 @@ bundle exec rake verify                           # 全量回归（必跑）
 
 | 坑 | 说明 | 出处 |
 |---|---|---|
-| 注册时序 | 全部 `register_prefix` / `register_prefix_from_super_class` 必须在类体内完成；任何先行 eval 会冻结 prefixes（`prefixes_pattern` 首调冻结）→ 运行期补注册 `FrozenError` | `docs/spike-t1.1-report.md` §5.7 / 上游 base.rb:35-47 |
+| 注册时序 | 全部 `register_prefix` / `register_prefix_from_super_class` 必须在类体内完成；任何先行 eval 会冻结 prefixes（`prefixes_pattern` 首调冻结）→ 运行期补注册 `FrozenError` | `docs/spike-t1.1-report.md` §5 第 7 项 / 上游 base.rb:35-47 |
 | `HELP_MESSAGE` 是**常量覆写** | 继承路线若只写扩展段，父类那段说明**整个消失**（2 版玩家最常用的 `K6` 说明没了）。正确写法 = `parent_help + extension_help` 拼接（不抄第二份惰性漂移） | `NinjaSlayer2Ex.rb` L61-78 注释（T1.1 遗留教训） |
 | i18n 键空间 | 只能在**自己的**命名空间新增表；往父类命名空间写键会**静默遮蔽**上游表。`test/i18n_guard_test.rb` 三层断言（白名单/上游全量逐字比对/yml 可解析）当场红——**新增命名空间时同步扩 `ALLOWED_TOP` 白名单**（当前只许 `NinjaSlayerEx` / `NinjaSlayer2Ex`） | `test/i18n_guard_test.rb`、`docs/spike-t1.1-report.md` 机制③ |
 | toml `output` 键必存 | 空串代 nil；缺键 runner NoMethodError（与上游同形）；`output` 是 `result.text` 逐字比对，**不归一化**——表文本手工抄录必红 | runner 源码、`docs/t1.4-karmarond-report.md` §5（生成器） |
