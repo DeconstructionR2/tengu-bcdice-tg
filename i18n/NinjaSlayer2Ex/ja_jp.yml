@@ -1,0 +1,34 @@
+# T1.1② 实证 dummy i18n 表
+#
+# 目的：证明当我们把本仓库 i18n/ 目录注入 I18n.load_path 后，
+# BCDice::GameSystem::NinjaSlayer2Ex 实例可以命中 NinjaSlayer2Ex.* 键。
+#
+# 内容故意取自上游 NinjaSlayer2/ja_jp.yml 的 SATSUBATSU 表文本
+# （逐字引用，纯文本复制，命名归源：见 references/src/BCDice/i18n/NinjaSlayer2/ja_jp.yml）
+# —— 仅复制三行（第 1～3 项）以减少噪声。后续 T1.2 数据管线会用脚本完整复制。
+# 这里我们用它来给 NinjaSlayer2Ex 一个独有的键空间，证明子类的 i18n 加载不会污染
+# 上游 gem，也不会被超类 NinjaSlayer2 命中（**两个键空间隔离**）。
+#
+# 格式锁定（与上游对齐，见 references/src/BCDice/i18n/NinjaSlayer2/ja_jp.yml + §15.5 V7）：
+#   ja_jp:
+#     <GameSystemClassNameCamel>:
+#       table:
+#         <TABLE_KEY>:           # 表 ID（命令前缀或表解析 key 决定）
+#           name: "…"            # 标签
+#           type: 1D6            # 骰型（D 表达式）
+#           items:               # 逐项文本
+#           - "…"
+#           - "…"
+ja_jp:
+  NinjaSlayer2Ex:
+    table:
+      SPIKE_DUMMY:
+        name: "T1.1 spike dummy 表(D6) ＞ "
+        type: 1D6
+        items:
+        - "SPIKE_DUMMY 1"
+        - "SPIKE_DUMMY 2"
+        - "SPIKE_DUMMY 3"
+        - "SPIKE_DUMMY 4"
+        - "SPIKE_DUMMY 5"
+        - "SPIKE_DUMMY 6"
