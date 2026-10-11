@@ -261,6 +261,22 @@ class TestCustomTables < Minitest::Test
     assert_equal 2, @ct.count_for(chat_id: 0, scope: "public")
   end
 
+  def test_edit_family_public_scope_reachable_with_zero_or_nil_chat_id
+    # kimi T3.3 评审提案 #1（必修）的回归钉：公共行 chat_id 恒 0 占位、不来自
+    # 入参——scope 覆盖必须在 chat_id nil 判**之前**，否则 edit 系 6 操作在
+    # public + chat_id 0/nil 下恒 invalid_argument（天狗 flag t 传 null channelID）
+    seed_public(name: "公共表")
+
+    ok = @ct.update_dice(chat_id: 0, name: "公共表", dice_name: "d66",
+                         dice_string: "1d6", scope: :public)
+    assert ok.ok?, "public + chat_id=0 的 update_dice 必须可达（#{ok.status}）"
+
+    del = @ct.delete_data(chat_id: nil, name: "公共表", data_index: "1",
+                          scope: :public)
+    refute del.invalid_argument?,
+           "public + chat_id=nil 的 delete_data 不得误判入参非法"
+  end
+
   # =========================================================================
   # C. 操作 3：改骰型（天狗 updateDice，db_wrapper.js:73）
   # =========================================================================
@@ -560,6 +576,24 @@ class TestCustomTables < Minitest::Test
     assert_equal 1, @ct.count_for(chat_id: 0, scope: "public")
   end
 
+  def test_publish_unique_fallback_returns_already_exists_and_keeps_both_sides
+    # kimi T3.3 评审提案 #9：预查路径之外的 UNIQUE 兜底分支（并发/异常路径：
+    # 预查公共为 nil、INSERT 却撞 UNIQUE）。用单例覆写让公共预查说谎，逼出
+    # 事务内的 ConstraintException 分支
+    seed_public(name: "衝突表", chat_id: OTHER_CHAT) # 公共侧预置同名
+    seed_private(name: "衝突表")                      # 本群私有同名
+
+    @ct.define_singleton_method(:fetch_row) do |scope_name, chat, key|
+      scope_name == "public" ? nil : super(scope_name, chat, key)
+    end
+
+    result = @ct.publish_table(chat_id: CHAT, name: "衝突表")
+
+    assert result.already_exists?, "UNIQUE 兜底必须回 already_exists"
+    refute_nil @ct.fetch(chat_id: CHAT, name: "衝突表"), "私有表必须原样存活"
+    assert_equal 1, @ct.count_for(chat_id: 0, scope: "public"), "公共侧仍是预置那条"
+  end
+
   def test_publish_missing_table_is_not_found
     result = @ct.publish_table(chat_id: CHAT, name: "没有这张")
 
@@ -816,8 +850,8 @@ class TestCustomTables < Minitest::Test
 
     result = @ct.all_for_chat(chat_id: CHAT)
 
-    assert_equal %w[本群乙 本群甲], result["private"].map(&:name).sort,
-                 "私有侧只含本群的表，且按名升序"
+    assert_equal %w[本群乙 本群甲], result["private"].map(&:name),
+                 "私有侧只含本群的表，且按名升序（ORDER BY 真实生效——不再 .sort 中和断言，评审提案 #10）"
     assert_equal %w[公共甲], result["public"].map(&:name),
                  "公共侧是全局的，与 chat_id 无关"
     refute_includes result["private"].map(&:name), "他群表",

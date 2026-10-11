@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/admin.rb — 管理员权限助手（T2.6，计划 §8 T2.6 / §0.2.4 getChatMember）
 #
@@ -117,7 +119,7 @@ module TelegramBot
     # @param clock [#call] 返回 Float 秒（可注入假时钟，测试零真实等待）
     # @param ttl [Float] 缓存时长（秒）
     # @param logger [#warn] 日志器（只记结构性信息，绝不记用户正文）
-    def initialize(api: nil, clock: nil, ttl: DEFAULT_TTL, logger: $stderr)
+    def initialize(api: nil, clock: nil, ttl: DEFAULT_TTL, logger: ::Logger.new($stderr))
       @api = api
       @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
       @ttl = ttl

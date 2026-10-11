@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/handlers/secret_dice.rb — 暗骰 /secret（T3.1，计划 §6 / §8 T3.1 / §12 R6）
 #
@@ -85,7 +87,7 @@ module TelegramBot
       # @param secrets [TenguDB::Secrets, nil] 暗骰结果存取（nil = 单连接新建）
       # @param resolver [#call] id → 规则类（nil = 走 EngineResolver）
       # @param logger [#warn, nil] 只记结构性信息，绝不记用户正文
-      def initialize(settings: nil, secrets: nil, resolver: nil, logger: $stderr)
+      def initialize(settings: nil, secrets: nil, resolver: nil, logger: ::Logger.new($stderr))
         @settings = settings
         @secrets = secrets
         @resolver = resolver || EngineResolver.method(:call)

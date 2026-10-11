@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # db/custom_tables.rb — 天狗 CT（自定义表）db 层 12 操作（T3.3）
 #
@@ -104,6 +106,10 @@ require "json"
 require_relative "connection"
 
 module TenguDB
+  # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
+  # db/bank.rb 同款守卫；kimi T3.3 评审提案 #6）
+  INT64_MAX = 9_223_372_036_854_775_807
+
   # --------------------------------------------------------------------------
   # DataRange：datarange 的值对象（isUse / max / min，**null = 不设限**）
   # --------------------------------------------------------------------------
@@ -251,7 +257,12 @@ module TenguDB
       return nil if value.nil?
       return nil if value.is_a?(String) && value.strip.empty?
 
-      int = value.to_i
+      # 严格解析（kimi T3.3 评审提案 #5）：宽容 to_i 会把 "42abc" 折成 42——
+      # 比较侧 fail-open 方向反了，必须与写入侧 normalize_user_ids 同款严格
+      int = value.is_a?(Integer) ? value : Integer(value.to_s, exception: false)
+      return nil if int.nil?
+      return nil if int.abs > INT64_MAX
+
       int.zero? ? nil : int
     end
   end
@@ -426,7 +437,7 @@ module TenguDB
 
     # @param connection [TenguDB::Connection, nil] nil = DB 层单连接
     # @param logger [#warn, nil] 只记结构性信息（异常类名），绝不记用户输入
-    def initialize(connection = nil, logger: $stderr)
+    def initialize(connection = nil, logger: ::Logger.new($stderr))
       @conn = connection || Connection.instance
       @logger = logger
     end
@@ -484,6 +495,11 @@ module TenguDB
         # UNIQUE(scope, chat_id, name)：同一群同名。**不静默覆盖**
         # （Firestore 的同 field set 是覆盖，本项目必须显式拦——见头部③）。
         return MutationResult.already_exists
+      rescue SQLite3::Exception => e
+        # 存储层故障（锁竞争等）与「重名」分开：回 error 态 + 结构性 warn——
+        # 与 edit_row/rename/publish 同一契约（kimi T3.3 评审提案 #4）
+        warn_line("[custom_tables] 建表失败：#{e.class}")
+        return MutationResult.error(e.class)
       end
 
       MutationResult.ok(fetch_row_to_table(scope_name, chat, key))
@@ -764,10 +780,16 @@ module TenguDB
       chat = sc == SCOPE_PUBLIC ? PUBLIC_CHAT_ID : normalize_chat_id(chat_id)
       return MutationResult.invalid_argument if chat.nil?
 
-      conn.execute(
-        "DELETE FROM #{TABLE} WHERE scope = ? AND chat_id = ? AND name = ?",
-        [sc, chat, key]
-      )
+      begin
+        conn.execute(
+          "DELETE FROM #{TABLE} WHERE scope = ? AND chat_id = ? AND name = ?",
+          [sc, chat, key]
+        )
+      rescue SQLite3::Exception => e
+        # 存储层故障回 error 态（与 edit 系同一契约，kimi T3.3 评审提案 #4）
+        warn_line("[custom_tables] 删表失败：#{e.class}")
+        return MutationResult.error(e.class)
+      end
       changed = conn.changes.positive?
 
       MutationResult.ok(nil, changed: changed)
@@ -900,15 +922,16 @@ module TenguDB
     # 块收到 [CustomTable, draft]，draft 里放要改的列（未放的列不动），
     # 返回 [状态, 是否真的变了]。状态非 OK 时**不写库**（事务空转提交）。
     def edit_row(chat_id:, name:, scope:)
-      chat = normalize_chat_id(chat_id)
-      key = normalize_name(name)
       sc = normalize_scope(scope)
-      if chat.nil? || key.nil? || sc.nil?
-        return MutationResult.invalid_argument
-      end
+      key = normalize_name(name)
+      return MutationResult.invalid_argument if key.nil? || sc.nil?
 
-      # 公共行的 chat_id 是 0 占位（不来自入参）
-      chat = PUBLIC_CHAT_ID if sc == SCOPE_PUBLIC
+      # 公共行的 chat_id 是 0 占位（不来自入参）——scope 覆盖必须在 chat_id
+      # nil 判**之前**（与 rename_table/delete_table 同款）：否则 public +
+      # chat_id 0/nil 会被误判 invalid_argument，6 个 edit 系操作在 flag t
+      # 路径全灭（kimi T3.3 评审提案 #1：审计修了 rename_table，这里残留孪生）
+      chat = sc == SCOPE_PUBLIC ? PUBLIC_CHAT_ID : normalize_chat_id(chat_id)
+      return MutationResult.invalid_argument if chat.nil?
 
       outcome = nil
       begin
@@ -924,7 +947,9 @@ module TenguDB
             if status != MutationResult::OK
               outcome = MutationResult.new(status, table: table, changed: false)
             else
-              write_columns(sc, chat, key, table, draft)
+              # changed=false（幂等未命中）时不写库——否则「没动数据」却拨动
+              # updated_at，自相矛盾（kimi T3.3 评审提案 #2，已实证）
+              write_columns(sc, chat, key, table, draft) if changed
               outcome = MutationResult.ok(fetch_row_to_table(sc, chat, key),
                                           changed: changed)
             end
@@ -1009,7 +1034,12 @@ module TenguDB
       return nil if chat_id.is_a?(String) && chat_id.strip.empty?
 
       id = chat_id.to_i
-      id.zero? ? nil : id
+      return nil if id.zero?
+      # int64 界守卫（kimi T3.3 评审提案 #6）：SQLite INTEGER 列是动态类型，
+      # 超界值会被静默存成 REAL、精度损失（db/bank.rb 同款守卫）
+      return nil if id.abs > INT64_MAX
+
+      id
     end
 
     def normalize_name(name)
@@ -1054,6 +1084,7 @@ module TenguDB
 
         int = v.is_a?(Integer) ? v : Integer(v.to_s, exception: false)
         next nil if int.nil? || int.zero?
+        next nil if int.abs > INT64_MAX # int64 界守卫（同 normalize_chat_id）
 
         int
       end
@@ -1075,6 +1106,8 @@ module TenguDB
     #
     # 天狗内层用的是 `datatable.dataTable[tableName.toLowerCase()]`——键是
     # downcase 的表名，故这里对**内置源**一律 downcase 再取。
+    # callable 内置源（引擎桥）抛异常不裸传给 handler：按未命中处理 + warn
+    # （kimi T3.3 评审提案 #11）。
     def lookup_builtin(source, name)
       key = name.downcase
       case source
@@ -1083,6 +1116,9 @@ module TenguDB
       else
         source.respond_to?(:call) ? source.call(key) : nil
       end
+    rescue StandardError => e
+      warn_line("[custom_tables] 内置表查找失败，按未命中处理：#{e.class}")
+      nil
     end
 
     SPEC_DICE = "dice"

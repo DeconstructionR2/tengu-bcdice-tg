@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/migration.rb — 群升级 re-key 处理器（T2.5）
 #
@@ -111,7 +113,7 @@ module TelegramBot
     #   （测试注入 :memory: 库；生产由 main.rb 显式传 Connection.instance，
     #   与 Settings 共用同一连接——单连接纪律，§3 决9）
     # @param logger [#warn] 日志器（只记结构性信息，绝不记用户正文）
-    def initialize(connection: nil, logger: $stderr)
+    def initialize(connection: nil, logger: ::Logger.new($stderr))
       @conn = connection
       @logger = logger
     end

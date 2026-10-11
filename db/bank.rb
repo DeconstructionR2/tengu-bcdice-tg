@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # db/bank.rb — 天狗银行（存钱/取钱 + 存道具/删道具 + 查账 + 清零，T3.2）
 #
@@ -179,7 +181,7 @@ module TenguDB
 
     # @param connection [TenguDB::Connection, nil] nil = DB 层单连接
     # @param logger [#warn, nil] 只记结构性信息（异常类名），绝不记用户输入
-    def initialize(connection = nil, logger: $stderr)
+    def initialize(connection = nil, logger: ::Logger.new($stderr))
       @conn = connection || Connection.instance
       @logger = logger
     end

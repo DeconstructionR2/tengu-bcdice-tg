@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/router.rb — 消息路由层（T2.3）
 #
@@ -278,7 +280,7 @@ module TelegramBot
                    aux_systems: nil,
                    migration: nil,
                    answer_callback: nil,
-                   logger: $stderr)
+                   logger: ::Logger.new($stderr))
       @api = api
       @handlers = handlers.dup
       @aux_enabled = aux_enabled || ->(_chat_id, _thread_id) { true }

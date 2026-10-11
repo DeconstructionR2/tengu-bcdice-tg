@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/handlers/bank.rb — 天狗银行 /bank（T3.2，计划 §5 / §6 / §8 T3.2）
 #
@@ -107,7 +109,7 @@ module TelegramBot
 
       # @param bank [TenguDB::Bank, nil] nil = DB 层单连接
       # @param logger [#warn, nil] 只记结构性信息，绝不记用户正文（道具名是用户输入）
-      def initialize(bank: nil, logger: $stderr)
+      def initialize(bank: nil, logger: ::Logger.new($stderr))
         @bank = bank
         @logger = logger
       end

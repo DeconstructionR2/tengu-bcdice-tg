@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS bank_record (
 CREATE TABLE IF NOT EXISTS custom_tables (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   scope        TEXT NOT NULL CHECK(scope IN ('private','public')),
-  chat_id      INTEGER NOT NULL DEFAULT 0,  -- 0=public; >0=private 所属群(占位避免 NULL 使 UNIQUE 失效——SQLite 中 NULL 互不相等)
+  chat_id      INTEGER NOT NULL DEFAULT 0,  -- 0=public 占位；非 0=private 所属群（群 chat_id 可为负）(占位避免 NULL 使 UNIQUE 失效——SQLite 中 NULL 互不相等)
   name         TEXT NOT NULL,
   spec         TEXT NOT NULL,         -- JSON: {dice:{a:..,b:..}, data:{..}}
   permissions  TEXT NOT NULL DEFAULT '[]',  -- JSON: user_id 数组

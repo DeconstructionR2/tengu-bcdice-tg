@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/handlers/settings.rb — /settings（T2.6，计划 §6 主轨 / §8 T2.6）
 #
@@ -90,7 +92,7 @@ module TelegramBot
       #   变成「所有人都能改群设置」；私聊不受影响）。main.rb 注入真身。
       # @param resolver [#call, nil] id → 规则类（取显示名）
       # @param logger [#warn, nil] 日志器（只记结构性信息；测试注入 IO::NULL）
-      def initialize(settings: nil, admin: nil, resolver: nil, logger: $stderr)
+      def initialize(settings: nil, admin: nil, resolver: nil, logger: ::Logger.new($stderr))
         @settings = settings
         @admin = admin
         @resolver = resolver || EngineResolver.method(:call)

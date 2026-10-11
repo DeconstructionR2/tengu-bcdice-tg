@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "logger"
+
 # ============================================================================
 # bot/handlers/dice.rb — 通用掷骰 + /system 双作用域切换（T2.4）
 #
@@ -125,7 +127,7 @@ module TelegramBot
       # @param resolver [#call] id → 规则类（nil → 走 EngineResolver）
       # @param system_ids [#call] → 可用 ID 数组（nil → 走 EngineResolver）
       # @param logger [#warn, nil] 日志器（只记结构性信息；测试注入 IO::NULL）
-      def initialize(settings: nil, resolver: nil, system_ids: nil, logger: $stderr)
+      def initialize(settings: nil, resolver: nil, system_ids: nil, logger: ::Logger.new($stderr))
         @settings = settings
         @resolver = resolver || EngineResolver.method(:call)
         @system_ids_provider = system_ids || EngineResolver.method(:system_ids)
