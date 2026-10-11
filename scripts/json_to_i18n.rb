@@ -84,7 +84,87 @@ def build_judge_section(json_data, namespace)
       "success_word" => w["success_word"],
       "success_message" => rewrite_text(seisen["success_message"]),
       "failure_word" => w["failure_word"]
-    }.freeze
+    }.freeze,
+    # T1.6：追加判定扩展（倍率 / 记忆符）的标签与倍率上界。
+    # 逐字来源 = $.shortcut.appendix[] 的 expands_to（"3d6>=4[=1/ジツ暴走]" 形式），
+    # 标签取 `/` 之后的注释段；倍率上界是**本扩展自定的安全上界**（天狗无上界），
+    # 不是天狗数据，故单独登记在 appendix_bairitsu_max 而不混进逐字搬运段。
+    "APPENDIX_EX" => build_appendix_ex_section(json_data)
+  }.freeze
+end
+
+# ---------------------------------------------------------------------------
+# 1.7 追加判定扩展段（T1.6 新增）—— 倍率 + 记忆符
+#
+#    天狗的 appendix 语义散在两处真函数里：
+#      - tengu_dice/NJShortcutTranslator.js:124 appTransration（记忆符 → "=y/标签"）
+#      - classes/Appendix.js:19            bairitsu（倍率 → Number(strArray[4])，默认 1）
+#    两者都不在 nd_datatable.js 的表数据中，逐表映射覆盖不到，故走独立段，
+#    与 1.6 的 judge 段同思路：从 JSON（extract_tengu_data.mjs 的 $.shortcut 段）
+#    逐字搬运，Ruby 侧只解析不重写。
+#
+#    产出键：
+#      NinjaSlayer2Ex.judge.APPENDIX_EX.J.label    # "ジツ暴走"     ← =1 的注释段
+#      NinjaSlayer2Ex.judge.APPENDIX_EX.L.label    # "LAN直結出目6数" ← =6 的注释段
+#      NinjaSlayer2Ex.judge.APPENDIX_EX.op_labels  # { "=" => "=" } … 天狗 option→显示符号
+#      NinjaSlayer2Ex.judge.APPENDIX_EX.bairitsu_max # Integer，本扩展自定上界
+#
+#    注意 `[C]`（コッポ判定 =4）**不在**本段内：计划 §5 拍板不搬
+#    （BCDice 上游 `[C]` 已是 クリティカル判定，同名不同义 → 保留上游语义），
+#    コッポ改用 `[=4]`。此点由 i18n_guard / 结构守卫共同钉死（见 §5 报告）。
+# ---------------------------------------------------------------------------
+def build_appendix_ex_section(json_data)
+  apps = json_data.dig("shortcut", "appendix")
+  abort "[json_to_i18n] JSON 缺 shortcut.appendix 段（先跑 node scripts/extract_tengu_data.mjs）" if apps.nil?
+
+  by_key = apps.to_h { |a| [a["key"], a] }
+
+  # 逐字从 `expands_to` 的 `/` 之后取标签。形如
+  # `3d6>=4[=1/ジツ暴走]` / `3d6>=4[>=5/サツバツ！]` / `3d6>=4[=4/コッポ判定]`。
+  # 用正则解析而非 split('/')：标签里理论上可含 `/`，split 会截断成数组。
+  # 前缀用宽松形态 `\d+d\d+…` 而非写死 `3d6>=4`——后者是天狗**说明书示例**的写法，
+  # 而 expands_to 是真函数展开物，改了写法就 abort 太脆。
+  def label_of(entry, key)
+    # 追加判定段内形如 `[=1/…]`、`[>=5/…]`、`[=6/…]`：`[<>!]` 可缺省（`=`），
+    # `=` 可缺省（`>` `<` `!`），两者组合覆盖 = / >= / <= / != / > / < / ==。
+    m = /\A\d+d\d+(?:[<>!]=?|=)\d+\[[<>!]?=(\d+)\/(.+)\]\z/.match(entry["expands_to"])
+    abort "[json_to_i18n] shortcut.appendix[#{key}] 的 expands_to 形态不在预期内：#{entry['expands_to'].inspect}" if m.nil?
+
+    m[2]
+  end
+
+  # 追加判定段的 border（同上形态），用于把「记忆符 → 出目数」钉成数据而非代码常量。
+  def border_of(entry, key)
+    m = /\A\d+d\d+(?:[<>!]=?|=)\d+\[[<>!]?=(\d+)\/.+\]\z/.match(entry["expands_to"])
+    abort "[json_to_i18n] shortcut.appendix[#{key}] 的 expands_to 形态不在预期内：#{entry['expands_to'].inspect}" if m.nil?
+
+    m[1].to_i
+  end
+
+  {
+    # 天狗 option 的显示符号：=  在 Appendix.js 里被规范成 '=='，输出前 replace(/==/g,'=')
+    # → 统一按 '=' 显示；其余原样。
+    "op_labels" => {
+      "==" => "=",
+      ">=" => ">=",
+      ">" => ">",
+      "<=" => "<=",
+      "<" => "<",
+      "!=" => "!="
+    }.freeze,
+    "J" => {
+      "border" => border_of(by_key.fetch("j"), "j"),
+      "label" => rewrite_text(label_of(by_key.fetch("j"), "j"))
+    }.freeze,
+    "L" => {
+      "border" => border_of(by_key.fetch("l"), "l"),
+      "label" => rewrite_text(label_of(by_key.fetch("l"), "l"))
+    }.freeze,
+    # 天狗 Appendix.js:19 `bairitsu = (strArray[4] != null && !isNaN(strArray[4])) ? Number(strArray[4]) : 1`
+    # → 无上界（`[>=5*999999]` 合法）。本扩展把「任意大倍率并入文字输出」当
+    # 误输入风险（玩家手滑打长数字会得到一个天文数字的伪计数），
+    # 故自定上界：超过即整条命令不响应。**这是有意偏离天狗的**，报告 §5 申报。
+    "bairitsu_max" => 100
   }.freeze
 end
 
@@ -400,6 +480,21 @@ unless options[:dry_run]
     end
     %w[judge_name success_word success_message failure_word].each do |k|
       selfcheck[:mismatched] << "judge.SEISEN.#{k} 逐字不一致" if got_judge.dig("SEISEN", k) != want_judge.dig("SEISEN", k)
+    end
+    # T1.6：APPENDIX_EX 段（倍率 / 记忆符标签）逐字回读
+    selfcheck[:checked] += 1
+    got_ap = got_judge["APPENDIX_EX"]
+    want_ap = want_judge["APPENDIX_EX"]
+    if got_ap.nil?
+      selfcheck[:mismatched] << "judge.APPENDIX_EX 段缺失（T1.6 倍率 / 记忆符）"
+    else
+      %w[J L].each do |k|
+        %w[border label].each do |f|
+          selfcheck[:mismatched] << "judge.APPENDIX_EX.#{k}.#{f} 逐字不一致" if got_ap.dig(k, f) != want_ap.dig(k, f)
+        end
+      end
+      selfcheck[:mismatched] << "judge.APPENDIX_EX.op_labels 逐字不一致" if got_ap["op_labels"] != want_ap["op_labels"]
+      selfcheck[:mismatched] << "judge.APPENDIX_EX.bairitsu_max 逐字不一致" if got_ap["bairitsu_max"] != want_ap["bairitsu_max"]
     end
   end
 end

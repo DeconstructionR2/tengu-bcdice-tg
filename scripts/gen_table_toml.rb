@@ -684,6 +684,183 @@ def generate_seisen_block
   [out.join("\n"), total]
 end
 
+# ---------------------------------------------------------------------------
+# T1.6：追加判定扩展（倍率 / 记忆符）的用例生成
+# ---------------------------------------------------------------------------
+#
+# 用例分五类，逐类钉住任务书「toml 用例覆盖正常系+异常系+组合系+三关交互」：
+#   ① 正常系：倍率各值、记忆符 J/L、父类对照（证明零漂移）
+#   ② 异常系：畸形倍率、越界倍率、[C] 冲突、逗号分隔
+#   ③ 组合系：多段追加判定、逗号连掷、倍率×记忆符
+#   ④ 三关交互：空白截断 / 大小写 upcase 的实际行为
+#   ⑤ 暗骰（S 前缀泛化的直接受益者）
+#
+# 全部 output 由真实 eval 采集（render_case 只做转义），生成器自检：
+#   - 标注「不响应」的必须真的 nil，否则 abort（防名单过时）
+#   - 标注「预期值」的必须出现在 output 里，否则 abort（防实现与用例脱节）
+# rolls 写法：每个用例都要给出**恰好** dice 数颗骰（`K6` = 6 颗、`K6,N6` = 12 颗）。
+# 这里用 rolls6/rolls12 两个小助手展开，避免手写一长串 `[x, 6]` 时数错个数——
+# 数错会让 RandomizerMock 抛 "@rands is empty!"（生成期即失败，不会静默产出坏用例）。
+def rolls6(*vals)
+  vals.map { |v| [v, 6] }
+end
+
+def rolls12(*vals)
+  vals.map { |v| [v, 6] }
+end
+
+T16_NORMAL_CASES = [
+  # [input, rolls, 期望出现在 output 里的片段, 说明]
+  ["K6[J]",    rolls6(5, 6, 6, 6, 6, 6), "ジツ暴走[=1]:0", "[J] 出目1计数·零命中"],
+  ["K6[J]",    rolls6(1, 2, 3, 4, 5, 6), "ジツ暴走[=1]:1[1]", "[J] 出目1计数·命中1"],
+  ["K6[L]",    rolls6(1, 2, 3, 4, 5, 6), "LAN直結出目6数[=6]:1[6]", "[L] 出目6计数·命中1"],
+  ["K6[L]",    rolls6(1, 2, 3, 4, 5, 1), "LAN直結出目6数[=6]:0", "[L] 出目6计数·零命中"],
+  ["K6[j]",    rolls6(1, 2, 3, 4, 5, 6), "ジツ暴走[=1]:1[1]", "小写 [j] 与 [J] 等价（upcase 在 Preprocessor 之后）"],
+  ["K6[l]",    rolls6(6, 6, 1, 1, 1, 1), "LAN直結出目6数[=6]:2[6,6]", "小写 [l] 与 [L] 等价"],
+  ["K6[>=5*2]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:4[6,5]", "倍率×2：命中2 → 4（天狗语义）"],
+  ["K6[>=5*2]", rolls6(4, 3, 1, 1, 1, 1), "追加判定[>=5]:0", "倍率×2·零命中 → 0"],
+  ["K6[>=5*3]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:6[6,5]", "倍率×3：命中2 → 6"],
+  ["K6[>=5*1]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:2[6,5]", "倍率×1 = 素形态"],
+  ["K6[=6*2]",  rolls6(6, 6, 1, 1, 1, 1), "追加判定[=6]:4[6,6]", "等值判定 ×2：命中2 → 4"],
+  ["K6[>4*3]",  rolls6(5, 6, 1, 1, 1, 1), "追加判定[>4]:6[6,5]", "严格大于判定 ×3（无 = 的形态）"],
+  ["K6[<=3*2]", rolls6(1, 3, 5, 5, 5, 5), "追加判定[<=3]:4[3,1]", "小于等于判定 ×2"],
+  ["K6[<2*4]",  rolls6(1, 3, 5, 5, 5, 5), "追加判定[<2]:4[1]", "小于判定 ×4"],
+  ["K6[!=2*2]", rolls6(1, 2, 5, 5, 5, 5), "追加判定[!=2]:10[5,5,5,5,1]", "不等判定 ×2：命中5 → 10"],
+  # 天狗实测：小数倍率合法且不取整（2.5 命中 2 → 5）
+  ["K6[>=5*2.5]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:5[6,5]", "小数倍率 2.5 命中2 → 5（天狗 Number() 语义）"],
+  ["K6[>=5*0.5]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:1[6,5]", "小数倍率 0.5 命中2 → 1"],
+  # 天狗实测：裸 * 与 *0 都给出倍率 0
+  ["K6[>=5*]",  rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:0[6,5]", "裸 * → Number('')=0（天狗默认分支）"],
+  ["K6[>=5*0]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:0[6,5]", "*0 → 倍率 0（天狗合法）"],
+  # 倍率上界：恰在上界响应，超一档不响应（后者在异常系）
+  ["K6[>=5*100]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:200[6,5]", "倍率 100（bairitsu_max 上界）仍响应"],
+  # 父类对照：素形态倍率 1 与父类追加判定逐字同源
+  ["K6[>=5]", rolls6(5, 6, 1, 1, 1, 1), "追加判定[>=5]:2[6,5]", "素形态（倍率 1）"],
+  ["K6[=6]",  rolls6(6, 6, 1, 1, 1, 1), "追加判定[=6]:2[6,6]", "父类形态 [=6] 零漂移"],
+  ["K6[C]",   rolls6(6, 6, 1, 1, 1, 1), "クリティカル判定[C]:2[6,6]", "[C] 保上游 クリティカル语义（计划 §5 拍板）"],
+  ["K6[=4]",  rolls6(4, 4, 1, 1, 1, 1), "追加判定[=4]:2[4,4]", "コッポ判定改用 [=4]（文档指定的替代写法）"],
+  ["K6[S5]",  rolls6(5, 6, 1, 1, 1, 1), "サツバツ判定[S5]:2[6,5]", "父类形态 [S5] 零漂移"],
+  # 难度字母变体（dice 部与父类同源）
+  ["N6[J]",   rolls6(1, 2, 3, 4, 5, 6), "ジツ暴走[=1]:1[1]", "N（Normal 難度）+ [J]"],
+  ["UH6[L]",  rolls6(6, 6, 1, 1, 1, 1), "LAN直結出目6数[=6]:2[6,6]", "UH（Ultra-Hard 難度）+ [L]"],
+  ["E6[J]",   rolls6(1, 2, 3, 4, 5, 6), "ジツ暴走[=1]:1[1]", "E（Easy 難度）+ [J]"],
+].freeze
+
+T16_COMBO_CASES = [
+  ["K6[J][L]",      rolls6(1, 6, 2, 3, 4, 5), ["ジツ暴走[=1]:1[1]", "LAN直結出目6数[=6]:1[6]"], "多段：记忆符 ×2"],
+  ["K6[J][>=5*2]", rolls6(1, 5, 2, 3, 4, 5), ["ジツ暴走[=1]:1[1]", "追加判定[>=5]:4[5,5]"], "多段：记忆符 + 倍率"],
+  ["K6[>=5*2][J]", rolls6(1, 5, 2, 3, 4, 1), ["追加判定[>=5]:2[5]", "ジツ暴走[=1]:2[1,1]"], "多段顺序互换（顺序应反映在输出顺序上）"],
+  ["K6[L][J][>=5*2]", rolls6(6, 1, 5, 1, 2, 3),
+   ["LAN直結出目6数[=6]:1[6]", "ジツ暴走[=1]:2[1,1]", "追加判定[>=5]:4[6,5]"], "三段共存"],
+  ["K6,N6[J]",     rolls12(1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6),
+   ["ジツ暴走[=1]:1[1]"], "逗号连掷 × 追加判定（两次掷骰各带一段）"],
+  ["K6[>=5*2][=1*3]", rolls6(5, 1, 2, 3, 4, 1), ["追加判定[>=5]:2[5]", "追加判定[=1]:6[1,1]"], "倍率段 ×2（两段倍率各自独立）"],
+  ["SSBX", rolls6(3), ["サツバツ"], "暗骰 SSBX（S 前缀保护泛化的受益者）"],
+].freeze
+
+T16_ERROR_CASES = [
+  "K6[>=5*x]",       # 非数字倍率 → 天狗降级为 1，本扩展收紧为不响应
+  "K6[>=5*-1]",      # 负倍率
+  "K6[>=5*101]",     # 超上界（bairitsu_max = 100）
+  "K6[J,L]",         # 逗号分隔（天狗合法，本扩展只用 ][）
+  "K6[J*2]",         # 记忆符不带倍率
+  "K6[L1]",          # 记忆符后带数字
+  "K6[JX]",          # 未知记忆符
+  "K6[>=665+*2]",    # 集合判定 + 倍率（天狗不支持）
+  "K6[>=7*2]",       # y 超出 1-6
+  "K6[>=5**2]",      # 双星号
+  "K6[]",            # 空追加判定
+  "K6[>=5*2",        # 未闭合
+].freeze
+
+# 三关交互用例：引擎 Preprocessor 对输入的实际形变（实测结论，报告 §1）
+T16_GATE_CASES = [
+  # trim_after_whitespace：`K6[J] 備考` 被截到空白前 → 追加判定仍在
+  ["K6[J] 備考", rolls6(1, 2, 3, 4, 5, 6), ["ジツ暴走[=1]:1[1]"],
+   "trim_after_whitespace：`[J] 備考` → 取空白前（追加判定保留）"],
+  # 骰式与追加判定之间有空格 → 被截成 `K6`，追加判定**整段丢失**（退化为裸判定）
+  ["K6 [J]", rolls6(6, 5, 4, 3, 2, 1), ["成功数:5"],
+   "trim_after_whitespace：`K6 [J]` → 截成 `K6`（追加判定丢失，与天狗抛异常方向一致）"],
+].freeze
+
+# @return [Array(String, Integer)] toml 文本 + 条数
+def generate_appendix_ex_block
+  out = []
+  total = 0
+
+  render = lambda do |input, rolls, output, result, expect_frags, comment|
+          lines = ["# #{comment}"]
+          lines.concat(render_case(nil, nil, input, rolls, output).split("\n"))
+          # 成功判定命令必须带上成功/失败标志——runner 对这四个字段逐条断言
+          # （render_case 是给表命令用的，不写标志；本批是**判定**命令）。
+          # 标志取自**真实 eval 的 Result**，不是手写常量，避免实现改了成败口径
+          # 而 toml 还写着旧值（runner 会当场红，但生成期就该拦下来）。
+          lines.insert(4, "success = #{result.success?}")
+          lines.insert(5, "failure = #{result.failure?}")
+          # 暗骰标志同样从真实 Result 取。SSBX 这类用例必须带 secret = true，
+          # 否则 runner 的 `assert_equal(data[:secret], result.secret?)` 会红
+          # （S 前缀保护泛化后 SSBX 终于可用——这正是 T1.6 的附带收益之一）。
+          lines.insert(6, "secret = #{result.secret?}") if result.secret?
+          expect_frags.each do |frag|
+            next if output.include?(frag)
+
+            abort_with("#{input}: 输出未含预期片段 #{frag.inspect}\n  output=#{output[0, 160]}")
+          end
+          [lines.join("\n"), 1]
+        end
+
+  T16_NORMAL_CASES.each do |input, rolls, frag, comment|
+    output, result = eval_case(input, rolls)
+    abort_with("#{input}（#{comment}）未响应——追加判定扩展路径可能已坏") if output.nil?
+
+    block, n = render.call(input, rolls, output, result, [frag], comment)
+    out << block << ""
+    total += n
+  end
+
+  T16_COMBO_CASES.each do |input, rolls, frags, comment|
+    output, result = eval_case(input, rolls)
+    abort_with("#{input}（#{comment}）未响应——组合形态可能已坏") if output.nil?
+
+    block, n = render.call(input, rolls, output, result, frags, comment)
+    out << block << ""
+    total += n
+  end
+
+  T16_GATE_CASES.each do |input, rolls, frags, comment|
+    output, result = eval_case(input, rolls)
+    abort_with("#{input}（#{comment}）未响应——三关交互路径可能已坏") if output.nil?
+
+    block, n = render.call(input, rolls, output, result, frags, comment)
+    out << block << ""
+    total += n
+  end
+
+  # 异常系：必须真的不响应
+  T16_ERROR_CASES.each do |cmd|
+    gs = KLASS.new(cmd)
+    # 给足 12 颗骰（K6=6 / 逗号连掷最多 12）。若实现某条**本应拒答却真的响应了**，
+    # 它会真的去掷骰并把随机源吃穿；此处抛的是 RandomizerMock 的
+    # "@rands is empty!"，同样让生成失败（不会静默产出坏用例）。
+    gs.randomizer = RandomizerMock.new(Array.new(12) { [6, 6] })
+    result = gs.eval
+    abort_with("#{cmd} 本应不响应，但真实 eval 有了输出——异常系名单已过时") unless result.nil?
+
+    out << "# 异常系：#{cmd} 不响应"
+    out << "[[ test ]]"
+    out << "game_system = \"#{GAME_SYSTEM_ID}\""
+    out << "input = \"#{toml_escape(cmd)}\""
+    out << "output = \"\""
+    out << "rands = ["
+    out << "  { sides = 6, value = 1 },"
+    out << "]"
+    out << ""
+    total += 1
+  end
+
+  [out.join("\n"), total]
+end
+
 # @param keys [Array<String>] 要生成的卡尔马派阀键
 # @return [Array(String, Integer)] toml 文本 + 条数
 def generate_block(keys = KARMAROND_KEYS)
@@ -746,6 +923,14 @@ END_MARK = "# <<< END GENERATED: T1.4 KARMAROND"
 
 BEGIN_MARK_T15 = "# >>> BEGIN GENERATED: T1.5 CHARAMAKE"
 END_MARK_T15 = "# <<< END GENERATED: T1.5 CHARAMAKE"
+
+# T1.6 起第三个独立哨兵块（追加判定扩展：倍率 / 记忆符）。
+#
+# 独立成块而非并入 T1.5：本批的命令面是**父类的 dice 部**（`K6[...]`），
+# 与キャラメイク/聖戦（自有前缀表）无交集，共用一块会让任一侧重生成时
+# 无谓 churn 另一段的排版。
+BEGIN_MARK_T16 = "# >>> BEGIN GENERATED: T1.6 APPENDIX_EX"
+END_MARK_T16 = "# <<< END GENERATED: T1.6 APPENDIX_EX"
 
 # 把 block 塞进 (begin, end) 哨兵；不存在则追加到文件末尾。
 #
@@ -870,8 +1055,45 @@ else
   puts "[gen_table_toml] 未选中キャラメイク表，跳过 T1.5 块"
 end
 
+# --- 块 3：T1.6 追加判定扩展（倍率 / 记忆符）---
+#
+# 本批**没有表键**可归 --tables（命令面是父类的 `K{x}[...]`，不是 Ex 自有表），
+# 故跟随默认全量生成：无 --tables 时一定产出；指定 --tables 时也一并产出
+# （它与所选表无关，不产出反而会让该语法无任何回归保护）。
+t16_body, t16_count = generate_appendix_ex_block
+puts "[gen_table_toml] T1.6 追加判定扩展（倍率 / 记忆符）#{t16_count} 条"
+
+t16_block = <<~HEADER
+  # ---------------------------------------------------------------------------
+  # T1.6 追加判定扩展：倍率 `[>=y*N]` + 记忆符 `[J]` / `[L]`
+  #
+  # 语义要点（全部来自天狗真函数实测，见 docs/t1.6-report.md §2）：
+  #   - **倍率 = 命中数 × N**（Appendix.js:19 + dice.js:158-162 逐个命中累加）。
+  #     小数倍率合法且**不取整**（`2.5` 命中 2 → 5）；裸 `*` 与 `*0` 都给出倍率 0
+  #     （天狗 `Number('')` === 0）；`*非数字` 天狗降级为 1，本扩展**收紧为不响应**。
+  #   - **记忆符 = 标签化的 [=y]**（NJShortcutTranslator.js:124 appTransration 实测）：
+  #     `[J]` → `[=1]` + 标签「ジツ暴走」、`[L]` → `[=6]` + 标签「LAN直結出目6数」。
+  #     计数逻辑与 `[=y]` **逐字相同**，实现走等价改写（无第二套计数代码）。
+  #   - **合计値不并入成功数**（有意偏离天狗，见报告 §5）：沿用父类模型，
+  #     倍率只放大追加カウント的显示值，不改变判定成败。
+  #   - **`[C]` 不搬**（计划 §5 拍板）：保上游 クリティカル判定语义，
+  #     コッポ判定改用 `[=4]`（父类原生支持，本块有用例钉住）。
+  #   - **三关交互**：空白截断与 upcase 的实测行为各有专门用例
+  #     （`K6[J] 備考` 保留追加判定；`K6 [J]` 整段丢失）。
+  #   - **S 前缀保护泛化**的受益者：`SSBX` 暗骰用例在本块内（此前不可用）。
+  #
+  # 父类追加判定（`[=6]` / `[S5]` / `[C]` / `[>=665+]` 等）**零改动**，
+  # 由本块的父类对照用例 + NinjaSlayer2.toml 孪生对拍共同钉死。
+  # ---------------------------------------------------------------------------
+
+  #{t16_body}
+HEADER
+
+updated = splice_block(updated, t16_block, BEGIN_MARK_T16, END_MARK_T16)
+
 File.write(TARGET_FILE, updated, encoding: "UTF-8")
 parts = []
 parts << "T1.4 #{count14} 条" if want_karma.any?
 parts << "T1.5 #{t15_total} 条" if want_chara.any?
+parts << "T1.6 #{t16_count} 条"
 puts "[gen_table_toml] ✓ 已写入 #{TARGET_FILE.sub("#{ROOT}/", '')}（#{parts.join(' + ')}）"

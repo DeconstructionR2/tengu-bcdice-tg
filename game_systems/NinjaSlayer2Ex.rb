@@ -164,6 +164,27 @@ module BCDice
         ※ `SEISEN`（数字なし）は応答しません。
         ※ 2D6 の合計は 2〜12 なので、DKK が 12 以上なら必ず成功、
         DKK が 1 以下なら必ず失敗になります（仕様どおり）。
+
+        --- 追加判定の拡張（T1.6）---
+        親类的コマンド `K{x}[追加判定]` の後ろに、以下の2形態が使えます。
+
+        - [{判定}]{y}*{倍率}    ※ 例：`[>=5*2]`（ヘンゲ『肉体破壊』用）
+        追加判定の**命中数に倍率を掛けます**。`8d6>=4[>=5*2]` で 5以上（=5,6）が
+        3 個出れば、表示は `追加判定[>=5]:6` になります（3×2）。倍率は小数も
+        指定できます（`[>=5*2.5]` → 命中 3 個なら 7.5）。
+        ※ 判定は `[>=]` `[>]` `[<=]` `[<]` `[=]` `[!=]` すべて指定可能です。
+        ※ 素の `{y}` は倍率 1 と同じ意味です（親類と同じ `[>=5]` が使える）。
+
+        - [J]      出目 1 の数（ジツ暴走）をカウントします
+        - [L]      出目 6 の数（LAN直結出目6数）をカウントします
+        記憶符は天狗ダイスの短縮記法です。中身は `[=1]` / `[=6]` と**完全に
+        同じ判定**で、違うのは表示ラベルだけです（`ジツ暴走[=1]:1[1]` と表示されます）。
+        ※ 1 コマンドに複数指定できます：`K6[J][L]` / `K6[J][>=5*2]`
+        ※ 天狗の `[C]`（コッポ判定＝出目4数）は**対応しません**。
+        親の `[C]` は「クリティカル判定」の意味なので混乱を避けるため
+        そのまま残しています。コッポ判定には `[=4]` を使ってください。
+
+        ※ 親類の追加判定（`[=6]` / `[S5]` / `[C]` など）は**一切変更していません**。
       TEXT
 
       # T1.1①：先继承超类全部前缀（UH/[KENHU]/SB/WS/WSE/NRS）。
@@ -452,10 +473,162 @@ module BCDice
       SEISEN_CMP = :<=
 
       # ------------------------------------------------------------------
-      # prefixes_pattern 覆写（T1.5）—— **SEISEN 的 S 前缀与引擎暗骰标记冲突**
+      # T1.6：追加判定扩展 —— 倍率 `[>=5*2]` + 记忆符 `[J]`/`[L]`
       # ------------------------------------------------------------------
       #
-      # 故障现象：`SEISEN9` 完全不响应（T1.5 实测），但直接调用
+      # 语义铁律（全部来自**真函数实测**，非源码推断，见 docs/t1.6-report.md §2）：
+      #
+      # ① **倍率 = 命中数 × 倍率**（classes/Appendix.js:19 + classes/dice.js:158-162）
+      #      Appendix 构造：`string.split(/([<>!]=?|=|\*)/)` → [前, op, border, "*", 倍率串]
+      #      `bairitsu = (strArray[4] != null && !isNaN(strArray[4])) ? Number(strArray[4]) : 1`
+      #      dice.js 二次计数：`appSum += app[k].bairitsu`（**逐个命中累加**）
+      #      → 实测 `8d6>=4[>=5*2]` 命中 3 颗 → 追加カウント = 6（非 3）。
+      #      形态 `[>=y*N]`：**只对比较型追加判定生效**（天狗 Appendix 强制
+      #      option ∈ {<,<=,=,==,!=,>=,>}，倍率是 option+border 之后的第三段）。
+      #
+      # ② **记忆符是「标签化的 [=y]」**，不是新判定逻辑
+      #      （tengu_dice/NJShortcutTranslator.js:124 appTransration 实测）：
+      #        [J] → '=1/ジツ暴走'            → 计数逻辑 == [=1]，只换标签
+      #        [L] → '=6/LAN直結出目6数'      → 计数逻辑 == [=6]，只换标签
+      #      且**是单条骰式内的追加计数器**（createAppendix 按 ',' 切分，
+      #      元素落在同一条 Dice 上），无跨消息状态 → 落引擎层安全。
+      #
+      # ③ **合计値的不对称（有意偏离，见报告 §5）**
+      #      天狗 `this.sum += appSum`（dice.js:170）把倍率后的命中数**并入合计**；
+      #      BCDice 父类的追加判定**从不并入成功数**（proc_dice_2nd 只把
+      #      `roll_result.success_num` 累进 total_success_num）。
+      #      → 本扩展沿用父类模型：倍率只放大**追加カウント的显示值**，
+      #        不并入成功数/達成値。理由：父类的成功数是判定成败的输入，
+      #        一旦并入倍率项，`K6[>=5*2]` 的成败就会随倍率改变，
+      #        而天狗那边成功数与追加カウント 是两个独立呈现的口径。
+      #        玩家要合计值时用 `calc` 自行相加（T1.9 备查）。
+      #
+      # ④ **异常倍率按天狗语义（默认 1）**，实测四条（报告 §2.2）：
+      #      `[>=5*x]` → isNaN → **倍率 1**（不拒答！天狗照常输出，只是倍率没生效）
+      #      `[>=5*]`  → split 出空串 → Number('')===0 → **倍率 0**
+      #      `[>=5*0]` → **倍率 0**（合法，命中数×0=0）
+      #      `[>=5*2.5]` → **倍率 2.5**（小数合法！dice.js 逐颗累加可出 .5）
+      #      → 三条铁律：**默认值照抄天狗（含 0 / 1 的怪异分支）**、
+      #        **小数倍率合法且不取整**、**倍率非数字不拒答（降级为 1）**。
+      #      唯一新增的收口是天狗没有的：`bairitsu_max` 上界（i18n
+      #      judge.APPENDIX_EX.bairitsu_max）—— 报告 §5 申报为有意偏离。
+      #
+      # ⑤ **`[C]` 不搬**（计划 §5 拍板）：BCDice 上游 `[C]` 已是
+      #      クリティカル判定（父类 RE_COUNT_CRITICAL），天狗 `[C]` 是
+      #      コッポ判定（出目4数カウント）。同名不同义 → 保上游，
+      #      コッポ改用 `[=4]`（**父类已原生支持**）。结构守卫钉死这一点。
+      #
+      # ⑥ **Preprocessor 三关实测**（报告 §1，逐条跑过）：
+      #      - trim_after_whitespace：`K6[J] 备注` 被截成 `K6[J]`（仍响应）；
+      #                       `K6 [J]` 被截成 `K6`（**追加判定丢失**，不响应预期外的成功）
+      #                       → 天狗侧是 `2d6>=4 [=1]` **抛异常**（dice.js CHECK_APPENDIX_SINTAX），
+      #                       两者都不接受「骰式与追加判定之间有空格」，行为一致。
+      #      - replace_parentheses：`[(3*2)]` 被算成 `[6]`（父类 appendix 不含
+      #                       括号，故本扩展的 appendix 也一律不含 → 无需回避）
+      #      - replace_implicit_d：`2D6>=4[...]` 里的 `2D6` 会被 implicit_d
+      #                       规则改写吗？**实测不会**（`(\d+)D([^\w]|$)` 要求 D 后
+      #                       是非单词字符，`2D6` 的 D 后是数字 6 → 不触发）；
+      #                       但 `2D+...` 形态会触发，本语法不含之。
+      #      - upcase：`@enabled_upcase_input` 在 **Preprocessor 之后**
+      #                       （base.rb:247 在 dice_command 内）执行 → `[j]`/`[l]`
+      #                       到达 proc_ex_appendix 时恒为大写 J/L，大小写天然等价；
+      #                       同时**它只 upcase 整条命令**，不单独处理 appendix 内容
+      #                       → 倍率串/数字不受影响（实测 `[>=5*2]` 原样）。
+      #
+      # ⑦ **与父类追加判定的共存形态**（钉版 toml 证据）：
+      #      `[J]` / `[L]` / `[>=5*2]` 是**父类正则不接受的新 appendix 形态**，
+      #      所以本扩展自带一条更宽的 dice 部正则（RE_EX_DICEROLL）先行，
+      #      命中后交给 proc_ex_appendix；未命中一律 `super`（父类原路径，
+      #      `[=6]`/`[S5]`/`[C]` 等**零改动**，由 toml 孪生对拍钉死）。
+
+      # 天狗的记忆符 → (判定符, 出目, 标签)。**标签不进代码**：
+      # 标签与出目都从 i18n 读（judge.APPENDIX_EX.{J,L}.{label,border}），
+      # 逐字来源 = tengu_tables.json $.shortcut.appendix[].expands_to
+      # （= '3d6>=4[=1/ジツ暴走]' 的注释段），由 scripts/json_to_i18n.rb 生成期搬运。
+      # 这里只登记「记忆符字母 → 天狗判定符」的映射（判定符是语法，不是文案）。
+      APPENDIX_MEMO_OPERATOR = "=".freeze
+
+      # 无记忆符时的默认标签（父类 proc_appendix 的输出文案，逐字沿用）。
+      #
+      # 为什么写死在代码里而不在 yml：它**不是**天狗的数据——天狗那边的
+      # 默认 comment 是硬编码的 `'追加カウント'`（Appendix.js:11），
+      # 且**日文不同**（カウント vs 判定）。本扩展沿用父类 BCDice 的
+      # 「追加判定」以保证同一条命令里 `K6[J][>=5*2]` 两段风格统一，
+      # 也在 NinjaSlayer2.toml 孪生对拍里天然对齐。故它是**有意的分歧**，
+      # 不进 yml（进 yml 会让人误以为能逐字回读天狗）。报告 §5 申报。
+      APPENDIX_DEFAULT_LABEL = "追加判定".freeze
+
+      # 天狗记忆符 → i18n 键名。字母表是**封闭**的（注册在类定义期完成，
+      # 见 register_prefix 时序铁律注释），不存在运行期动态扩展。
+      APPENDIX_MEMO_KEYS = %w[J L].freeze
+
+      # 倍率上界。天狗无上界（`[>=5*999999]` 合法，Appendix.js:19 只判 isNaN）。
+      # 本扩展自定上界，超出即整条命令不响应——理由与数值都在 yml
+      # （judge.APPENDIX_EX.bairitsu_max，生成期写死 100），
+      # 代码只读不写，改上界请改 json_to_i18n.rb 的生成值。
+      def self.appendix_bairitsu_max
+        I18n.t("NinjaSlayer2Ex.judge.APPENDIX_EX.bairitsu_max", locale: :ja_jp)
+      end
+
+      # 倍率的「合法数字串」形态。天狗是 `Number(x)` + `isNaN` 兜底（实测 §2.2）：
+      #   - `Number('')` === 0        → 裸 `*` 给出 0
+      #   - `isNaN('x')` → true      → `*x` 落到默认 1
+      #   - `Number('2.5')` === 2.5  → 小数合法
+      # 故 ASCII 侧只需一个宽松数字串 `\d*\.?\d*` 即可复刻前三条分支：
+      # 空串 → 0（天狗同）、纯数字 → 原值、小数 → 原值。
+      #
+      # ⚠ `*x`（非数字）**故意不收**：天狗会降级成倍率 1 并照常输出，
+      #   ASCII 侧让整条命令不响应——玩家打 `[>=5*x]` 时多半是把倍率写错了，
+      #   静默按 1 输出比不响应更危险（他以为生效了）。报告 §5 申报为有意收紧。
+      RE_APPENDIX_BAIRITSU = /\A\d*\.?\d*\z/.freeze
+
+      # 追加判定（appendix）单条形态的**无锚点片段**。
+      #
+      #   判定符 = `(=|!=|>=|>|<=|<)` —— 与父类 RE_COUNT_JUDGE 的
+      #            分组 1 **逐字同源**（结构守卫直接比对源码常量）。
+      #   y      = 只收单值 `[1-6]`，与父类单值分支同源。
+      #            ⚠ **不收集合判定 `665+`**：天狗那边 appendix 的 border 走
+      #            `Number(strArray[2])`（Appendix.js:18），`665+` → NaN →
+      #            checkAppendix 抛错，即天狗**根本不支持**集合判定。
+      #            BCDice 父类支持，但那走的是父类路径（super），
+      #            不该被倍率形态顺手接管——否则 `[>=665+*2]` 会在这里
+      #            静默生效，与天狗相反。
+      #   倍率   = 可选 `*` + 数字串（T1.6 新增；空串 = 天狗的 Number('')===0）
+      #   记忆符 = J / L（T1.6 新增）
+      #
+      # ⚠ 外层**必须**是非捕获组 `(?:…)`：写成捕获组 `((…)|([JL]))` 会让
+      #   交替的 `|` 落在这个组的**内部**（交替优先级低于分组），
+      #   于是组 1 匹配的是整个比较形态 `">=5*2"` 而非判定符 `">="`，
+      #   组号整体错位。这是本任务实现期真实踩到的坑（`K6[>=5*2]` 静默不响应）。
+      #
+      # 分组：1 判定符、2 y、3 倍率串、4 记忆符字母。
+      APPENDIX_ONE_FRAGMENT = "(?:(=|!=|>=|>|<=|<)([1-6])\\*([\\d]*\\.?[\\d]*)|([JL]))".freeze
+
+      # 单条 appendix 的完整正则 = 片段 + 锚点。
+      # 与 RE_EX_DICEROLL 用**同一个**片段常量拼装 → 两者同源是构造保证，
+      # 不是靠人工同步（结构守卫仍会复核，但漂移已无处可藏）。
+      #
+      # proc_ex_appendix 按「分组4 非 nil → 记忆符」分流。
+      RE_EX_APPENDIX_ONE = Regexp.new("\\A#{APPENDIX_ONE_FRAGMENT}\\z", Regexp::IGNORECASE).freeze
+
+      # 天狗的追加判定分隔符是 `,`（dice.js:182-196：`string.replace(/\]\[/g, ',')`
+      # 后按 ',' 切），即 `[J,L]` 与 `[J][L]` **完全等价**（实测同结果）。
+      # BCDice 父类只用 `][`，故本扩展同样只用 `][`——不引入第三种分隔符，
+      # 免得同一类命令出现两种多段写法。报告 §5 申报（`[J,L]` 在 ASCII 侧不响应）。
+      #
+      # dice 部 `((?:(?:UH|[KENHU])?\d+,?)+)` 与父类 RE_JUDGE_DICEROLL 的
+      # 分组 1 **逐字同源**，结构守卫逐字对比。
+      RE_EX_DICEROLL = Regexp.new(
+        "\\A((?:(?:UH|[KENHU])?\\d+,?)+)\\[(#{APPENDIX_ONE_FRAGMENT}" \
+        "(?:\\]\\[#{APPENDIX_ONE_FRAGMENT})*)\\]\\z",
+        Regexp::IGNORECASE
+      ).freeze
+
+      # ------------------------------------------------------------------
+      # prefixes_pattern 覆写（T1.5 引入 / T1.6 泛化）—— **S 前缀与引擎暗骰标记冲突**
+      # ------------------------------------------------------------------
+      #
+      # 故障现象（T1.5 实测）：`SEISEN9` 完全不响应，但直接调用
       # eval_game_system_specific_command("SEISEN9") 一切正常。
       #
       # 根因（逐步实证，docs/t1.5-report.md §3）：
@@ -463,39 +636,52 @@ module BCDice
       #     /^(S)?(UH|[KENHU]|SB|WS|WSE|NRS|NSRS|...|SEISEN)/i
       #   ① 可选的 `(S)?` 是 BCDice 的**暗骰标记**；命中即把命令首字符 S 剥掉
       #      （base.rb:254-255 `command = command[1..-1] if secret`）。
-      #   ② 正则回溯优先让 `(S)?` 匹配掉 "SEISEN9" 的 S，
-      #      剩下 "EISEN9" 交给前缀组——而 `[KENHU]` 这个字面量被当成
-      #      **字符类**（上游 register_prefix("[KENHU]") 的既有语义），
-      #      其中的 `E` 恰好匹配 "EISEN9" 的首字母 E。
+      #   ② 正则回溯优先让 `(S)?` 匹配掉 "SEISEN9" 的 S，剩下 "EISEN9"
+      #      交给前缀组——而 `[KENHU]` 这个字面量被当成**字符类**
+      #      （上游 register_prefix("[KENHU]") 的既有语义），其 `E` 匹配首字母 E。
       #   → 命令变成 "EISEN9"，本类正则全部失配 → 不响应。
-      #   → 顺带说明：`SWSX`/`SNJI` 是**正常**的（父类 WS / 本类 NJI 不以 S 开头，
-      #      `S` 确实是暗骰标记），只有 SEISEN 是"真 S 开头被误吃"。
       #
-      # 本覆写的做法：在**父类原正则前**追加一个 `SEISEN` 优先分支。
-      #   - `(S)?` 只能吃掉第二个 S：`SSEISEN9` 仍是合法的暗骰命令；
-      #   - 裸 `SEISEN9` 由新分支整体匹配，`m[1]` 为 nil → secret=false，
-      #     命令原样传下去（这才是我们要的）。
+      # ⚠ **T1.6 泛化（本任务的 kimi 评审预警 2）**：
+      #   T1.5 的覆写只把 **SEISEN 一个**前缀写进保护分支，是**打补丁**形态：
+      #   每注册一个 S 开头的前缀都得记得再改这里，漏一个就复现同款 bug。
+      #   T1.6 改为**自动保护所有 S/s 开头的已注册前缀**：
+      #     S_PROTECTED_PREFIXES 在**首次调用 prefixes_pattern 时**从
+      #     self.prefixes 动态收集。此时全部 register_prefix 已在类体内完成
+      #     （时序铁律：注册必须全部在类体内），冻结后列表**恒定封闭**，
+      #     不存在运行期漂移。
+      #
+      #   为什么要**按长度降序**排列：正则交替是「先到先得」，
+      #   `SB|SBX` 会让 `SBX` 命中 `SB` 分支后剩 `X`（正是原 bug 的形态）。
+      #   降序保证最长前缀先试。实测 SEISEN|SBX|SB 全部命中正确（§3 探针）。
+      #
+      #   副作用审计（逐条跑过，toml + engine_structure_test 结构断言）：
+      #   - 只影响**以 S/s 开头**的前缀（T1.6 时 = SEISEN / SBX / SB）。
+      #   - 这些前缀的**裸命令**行为不变（T1.5 探针已证明 SBX / SB 本来就
+      #     正常——它们的正则组在 `(S)?` 回溯失败后仍能命中）。
+      #   - `SS<任意 S 前缀>` 仍是合法暗骰命令（第二个 S 被 `(S)?` 吃掉）。
+      #   - 非 S 前缀的暗骰形态（`SWSX`/`SNJI@3`/`SK6`）**完全不受影响**
+      #     ——保护分支只加不加不减，回溯顺序对它们不变。
+      #   - `[KENHU]` 字符类怪癖是上游既有行为（父类单独跑也如此），原样保留。
       #
       # 为什么不用 change_text（上游 NinjaSlayer.rb:82 的惯用法）？
       #   change_text 的输出会**再经 upcase**，且必须自己把命令改写成能通过
       #   prefixes_pattern 的形状；为一个前缀写字符串级手术，
       #   风险高于直接修正前缀正则本身。此处选择更小的作用面。
       #
-      # ⚠ 副作用审计（已逐条跑过，见 toml 用例 + test/engine_structure_test.rb 结构断言）：
-      #   只给 **SEISEN** 这一个前缀新增了"可作为首字符被保护"的能力，
-      #   其余前缀与父类**逐字节同源**（正则原文经 `super.source` 取得——注意 super
-      #   以子类为 self 运行，故内层列表含子类全部前缀，SEISEN 同时出现在外层保护
-      #   分支与内层列表中；外层先命中，语义不变）。
-      #   `[KENHU]` 的字符类怪癖是上游既有行为（父类单独跑也如此），本覆写原样保留。
-      #   R1 升级守卫：test/engine_structure_test.rb 断言本覆写的结构形态，
-      #   上游改 prefixes_pattern 签名/语义时当场红，而非静默劣化。
-      #
       # 实现注意：父类 @prefixes_pattern 是**实例变量**而非类变量字典，
       #   但 Ruby 的类实例变量沿继承链各自独立，故这里直接重设本类的
       #   @prefixes_pattern 即可（父类的缓存不受影响）。
+      #
+      # R1 升级守卫：test/engine_structure_test.rb 断言本覆写的结构形态
+      #   （通式而非硬编码前缀名），上游改 prefixes_pattern 签名/语义时当场红。
+      def self.s_protected_prefixes
+        # 首次调用即冻结（与上游 prefixes_pattern 同一时序铁律）。
+        @s_protected_prefixes ||= prefixes.grep(/\A[Ss]/).sort_by { |p| [-p.length, p] }.freeze
+      end
+
       def self.prefixes_pattern
         @prefixes_pattern ||= Regexp.new(
-          "\\A(?:SEISEN|#{super.source})",
+          "\\A(?:#{s_protected_prefixes.join('|')}|#{super.source})",
           Regexp::IGNORECASE
         ).freeze
       end
@@ -541,9 +727,194 @@ module BCDice
           return proc_chara_make(Regexp.last_match[1].upcase, Regexp.last_match[2])
         when RE_SEISEN
           return proc_seisen(Regexp.last_match[1].to_i)
+        when RE_EX_DICEROLL
+          # T1.6：倍率 / 记忆符形态的追加判定（父类正则不接受这些形态）
+          return proc_ex_diceroll(Regexp.last_match)
         end
 
         return nil
+      end
+
+      # T1.6：倍率 / 记忆符形态的成功判定（`K6[J]` / `2B6>=4[>=5*2]` …）
+      #
+      # 与父类 proc_dice_2nd 的关系：**刻意不调用**。
+      #   - 父类的 proc_dice_2nd 会调 proc_appendix，而 proc_appendix 的
+      #     case 分支只认父类形态（S / C / 比较符），`[>=5*2]` 会被
+      #     RE_COUNT_JUDGE 的 `([1-6]+\+?|[1-6])` 部分匹配后**整条落空**
+      #     （无 else 分支 → 返回空串，追加判定静默消失）。
+      #   - 父类的 RE_JUDGE_DICEROLL 根本匹配不到倍率/记忆符形态，
+      #     所以它们压根到不了 proc_dice_2nd。
+      #   → 故这里自带一份 dice 部循环，**只**处理本扩展的 appendix 形态，
+      #     掷骰/成功数/输出骨架逐字照抄父类，保证玩家看到的格式不变。
+      #
+      # 输出格式与父类逐字同构：
+      #   `(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n`
+      # 差异**只有** 追加计数那一项：倍率后的值 + 记忆符标签（见铁律③）。
+      #
+      # @param match [MatchData] RE_EX_DICEROLL 的匹配结果
+      # @return [String, nil] 输出文本；倍率越界等非法形态返回 nil（不响应）
+      def proc_ex_diceroll(match)
+        dice_part = match[1]
+        appendix_part = match[2]
+
+        # ⚠ **先全量校验，后掷骰**：倍率越界 / 判定符非法这类形态必须
+        #   在**消耗随机数之前**就判定为不响应。否则 `K6[>=5*101]` 会先掷 6 颗
+        #   骰、再返回 nil——对玩家无害（结果被丢弃），但 toml 的异常系用例
+        #   只能写空 rands，于是 runner 拿 1 颗骰喂一个要 6 颗的命令而抛
+        #   "@rands is empty!"。且白掷骰是纯粹的资源浪费。
+        #   （这是实测踩到的：异常系用例在 toml runner 里报 Error 而非 Assertion。）
+        specs = appendix_part.split("][").map { |ap| parse_ex_appendix(ap) }
+        return nil if specs.any?(&:nil?)
+
+        output_text = ''
+        total_success_num = 0
+
+        dice_part.split(",").each do |sub_command|
+          difficulty = 0
+          /^(UH|[KENHU])?(\d+)$/i.match(sub_command)
+          unless Regexp.last_match[1].nil?
+            difficulty = DIFFICULTY_SYMBOL_TO_INTEGER.fetch(Regexp.last_match[1])
+          end
+          dice_num = Regexp.last_match[2].to_i
+
+          # D6バラバラロール（与父类同一条命令字符串）
+          roll_command = "#{dice_num}B6>=#{difficulty}"
+          roll_result = BCDice::CommonCommand::BarabaraDice.eval(roll_command, self, @randomizer)
+
+          output_text += "(#{roll_command}) ＞ #{roll_result.last_dice_list.join(',')} ＞ 成功数:#{roll_result.success_num}"
+
+          specs.each do |spec|
+            output_text += proc_ex_appendix(roll_result, spec)
+          end
+          output_text += " \n"
+
+          total_success_num += roll_result.success_num
+        end
+
+        return Result.success(output_text) if total_success_num > 0
+
+        return Result.failure(output_text)
+      end
+
+      # T1.6：单条追加判定的**解析 + 校验**（不掷骰、不需要 roll_result）
+      #
+      # 抽出来单独一层的原因见 proc_ex_diceroll 的「先全量校验」注释：
+      # 判定合法性只需要语法与倍率上界，与骰子结果无关；而计数需要骰子。
+      # 两层分开后，「非法即不响应且不掷骰」变成构造上的必然，而非靠调用顺序凑巧。
+      #
+      # @param ap_command [String] 单条 appendix（不含外层方括号）
+      # @return [Hash, nil] 规范化后的 spec；形态非法返回 nil
+      #   { op:, border:, cmp_op:, label:, op_label:, bairitsu:}
+      def parse_ex_appendix(ap_command)
+        m = RE_EX_APPENDIX_ONE.match(ap_command)
+        return nil if m.nil?
+
+        if (memo = m[4])
+          # 记忆符：等价改写为 [=border]（标签不同，计数逻辑逐字相同）。
+          # 任务书要求的「优先走等价改写」在此落地：没有第二套计数实现，
+          # 只有一条边界 + 一个标签来源。
+          #
+          # border 从 i18n 读出来是 **Integer**，而比较分支的 y 是 **String**。
+          # 两条路径必须统一成 String 之后才能共用 to_i，
+          # 故此处显式 to_s（第一版漏了这一步 → NoMethodError on Integer）。
+          memo_i18n = appendix_ex_memo(memo)
+          border = memo_i18n.fetch(:border).to_s
+          label = memo_i18n.fetch(:label)
+          op = APPENDIX_MEMO_OPERATOR
+          bairitsu = 1
+        else
+          op = m[1]
+          label = nil
+          border = m[2]
+          # 天狗 Appendix.js:19 的默认值分支：空串 → 0（Number('') === 0）。
+          # 正则已保证倍率串是合法数字串，故这里不会遇到 NaN。
+          raw_bairitsu = m[3]
+          bairitsu = raw_bairitsu.empty? ? 0 : raw_bairitsu.to_f
+          return nil if bairitsu > self.class.appendix_bairitsu_max
+        end
+
+        cmp_op = Normalize.comparison_operator(op)
+        return nil if cmp_op.nil?
+
+        op_label = appendix_ex_op_label(op)
+        return nil if op_label.nil?
+
+        {
+          op: op,
+          border: border,
+          cmp_op: cmp_op,
+          label: label.nil? ? APPENDIX_DEFAULT_LABEL : label,
+          op_label: op_label,
+          bairitsu: bairitsu
+        }
+      end
+
+      # T1.6：单条追加判定的计数与输出（需要掷骰结果）
+      #
+      # @param roll_result [BCDice::CommonCommand::BarabaraDice::Node] 掷骰结果
+      # @param spec [Hash] parse_ex_appendix 的产物
+      # @return [String] 追加文本片段
+      def proc_ex_appendix(roll_result, spec)
+        # 计数（父类 proc_appendix 的单值分支逐字同构）：
+        # 命中 = 满足条件的骰子集合。倍率形态只支持单值 y（正则已限定），
+        # 集合判定 `665+` 仍走父类路径（super），天狗那边也不支持它。
+        success_dice = roll_result.last_dice_list.select do |v|
+          v.send(spec[:cmp_op], spec[:border].to_i)
+        end
+
+        # 天狗 dice.js:158-162：逐个命中累加倍率 → appSum = 命中数 × 倍率。
+        # 用浮点累加以支持小数倍率（2.5 命中 2 颗 = 5，与天狗实测一致）。
+        app_sum = 0.0
+        success_dice.size.times { app_sum += spec[:bairitsu] }
+
+        result = ", #{spec[:label]}[#{spec[:op_label]}#{spec[:border]}]:#{format_bairitsu(app_sum)}"
+        result += "[#{success_dice.sort.reverse.join(',')}]" unless success_dice.empty?
+        result
+      end
+
+      # 记忆符 → i18n 段（judge.APPENDIX_EX.{J,L}）
+      #
+      # 每次调用都重取（不缓存成类常量）：i18n 走 translate，受 @locale 影响，
+      # 而 locale 是**实例**属性。常量在类定义期求值会锁死第一个 locale。
+      #
+      # ⚠ translate 返回的是 **Symbol 键**的 Hash（BCDice 的 Translate 把
+      #   YAML 载入后 symbolize，见 translate.rb），不是 String 键。
+      #   用 fetch("border") 会 KeyError —— 这是本方法第一版的真实翻车点。
+      #
+      # @param memo [String] "J" / "L"
+      # @return [Hash] {border: Integer, label: String}
+      def appendix_ex_memo(memo)
+        translate("NinjaSlayer2Ex.judge.APPENDIX_EX.#{memo}")
+      end
+
+      # 天狗判定符 → 显示符号。
+      #
+      # 天狗 Appendix.js:17 把 `=` 规范成 `==`，输出前再 `replace(/==/g, '=')`
+      # （dice.js:178）→ 统一显示 `=`。此处从 i18n 读映射表，
+      # 而不是硬编码，保证 yml 里的表与实现同源（i18n_guard 会验）。
+      #
+      # @param op [String] "=" / ">=" / …
+      # @return [String, nil] 显示符号；未登记的符号返回 nil
+      def appendix_ex_op_label(op)
+        normalized = op == "=" ? "==" : op
+        translate("NinjaSlayer2Ex.judge.APPENDIX_EX.op_labels.#{normalized}")
+      rescue StandardError
+        nil
+      end
+
+      # 倍率后的计数值 → 输出字符串。
+      #
+      # 天狗那边是 JS 浮点（`appSum += 2.5` 得 7.5，`String(7.5)` → "7.5"）。
+      # Ruby 侧同形：小数保留**恰好一位**（7.5），整数不带小数点（6）。
+      # 不能用 `app_sum.round.to_s`（会把 7.5 打成 8，与天狗不一致）。
+      # 也不能用 `to_s` 直接出 "7.5" 之外的形态（0.1+0.2 类浮点噪声），
+      # 故先 round 到 4 位消除噪声，再按「整数/一位小数」规范化。
+      #
+      # @param value [Float]
+      # @return [String]
+      def format_bairitsu(value)
+        rounded = value.round(4)
+        rounded == rounded.truncate ? rounded.to_i.to_s : rounded.to_s
       end
 
       # キャラメイク表を振る（6 表 + `@n` 定値表示）

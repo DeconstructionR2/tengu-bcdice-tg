@@ -2659,3 +2659,731 @@ success = false
 failure = false
 rands = [
 ]
+
+# >>> BEGIN GENERATED: T1.6 APPENDIX_EX
+# ---------------------------------------------------------------------------
+# T1.6 追加判定扩展：倍率 `[>=y*N]` + 记忆符 `[J]` / `[L]`
+#
+# 语义要点（全部来自天狗真函数实测，见 docs/t1.6-report.md §2）：
+#   - **倍率 = 命中数 × N**（Appendix.js:19 + dice.js:158-162 逐个命中累加）。
+#     小数倍率合法且**不取整**（`2.5` 命中 2 → 5）；裸 `*` 与 `*0` 都给出倍率 0
+#     （天狗 `Number('')` === 0）；`*非数字` 天狗降级为 1，本扩展**收紧为不响应**。
+#   - **记忆符 = 标签化的 [=y]**（NJShortcutTranslator.js:124 appTransration 实测）：
+#     `[J]` → `[=1]` + 标签「ジツ暴走」、`[L]` → `[=6]` + 标签「LAN直結出目6数」。
+#     计数逻辑与 `[=y]` **逐字相同**，实现走等价改写（无第二套计数代码）。
+#   - **合计値不并入成功数**（有意偏离天狗，见报告 §5）：沿用父类模型，
+#     倍率只放大追加カウント的显示值，不改变判定成败。
+#   - **`[C]` 不搬**（计划 §5 拍板）：保上游 クリティカル判定语义，
+#     コッポ判定改用 `[=4]`（父类原生支持，本块有用例钉住）。
+#   - **三关交互**：空白截断与 upcase 的实测行为各有专门用例
+#     （`K6[J] 備考` 保留追加判定；`K6 [J]` 整段丢失）。
+#   - **S 前缀保护泛化**的受益者：`SSBX` 暗骰用例在本块内（此前不可用）。
+#
+# 父类追加判定（`[=6]` / `[S5]` / `[C]` / `[>=665+]` 等）**零改动**，
+# 由本块的父类对照用例 + NinjaSlayer2.toml 孪生对拍共同钉死。
+# ---------------------------------------------------------------------------
+
+# [J] 出目1计数·零命中
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,6,6,6,6 ＞ 成功数:6, ジツ暴走[=1]:0 \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# [J] 出目1计数·命中1
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# [L] 出目6计数·命中1
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[L]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, LAN直結出目6数[=6]:1[6] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# [L] 出目6计数·零命中
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[L]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,1 ＞ 成功数:4, LAN直結出目6数[=6]:0 \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 1 },
+]
+
+# 小写 [j] 与 [J] 等价（upcase 在 Preprocessor 之后）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[j]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# 小写 [l] 与 [L] 等价
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[l]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,6,1,1,1,1 ＞ 成功数:2, LAN直結出目6数[=6]:2[6,6] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 倍率×2：命中2 → 4（天狗语义）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:4[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 倍率×2·零命中 → 0
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 4,3,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:0 \n"
+rands = [
+  { sides = 6, value = 4 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 倍率×3：命中2 → 6
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*3]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:6[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 倍率×1 = 素形态
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*1]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:2[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 等值判定 ×2：命中2 → 4
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[=6*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,6,1,1,1,1 ＞ 成功数:2, 追加判定[=6]:4[6,6] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 严格大于判定 ×3（无 = 的形态）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>4*3]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>4]:6[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 小于等于判定 ×2
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[<=3*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,3,5,5,5,5 ＞ 成功数:5, 追加判定[<=3]:4[3,1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+]
+
+# 小于判定 ×4
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[<2*4]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,3,5,5,5,5 ＞ 成功数:5, 追加判定[<2]:4[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+]
+
+# 不等判定 ×2：命中5 → 10
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[!=2*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,5,5,5,5 ＞ 成功数:5, 追加判定[!=2]:10[5,5,5,5,1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 5 },
+]
+
+# 小数倍率 2.5 命中2 → 5（天狗 Number() 语义）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2.5]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:5[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 小数倍率 0.5 命中2 → 1
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*0.5]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:1[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 裸 * → Number('')=0（天狗默认分支）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:0[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# *0 → 倍率 0（天狗合法）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*0]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:0[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 倍率 100（bairitsu_max 上界）仍响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*100]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:200[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 素形态（倍率 1）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:2[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 父类形态 [=6] 零漂移
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[=6]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,6,1,1,1,1 ＞ 成功数:2, 追加判定[=6]:2[6,6] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# [C] 保上游 クリティカル语义（计划 §5 拍板）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[C]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,6,1,1,1,1 ＞ 成功数:2, クリティカル判定[C]:2[6,6] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# コッポ判定改用 [=4]（文档指定的替代写法）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[=4]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 4,4,1,1,1,1 ＞ 成功数:2, 追加判定[=4]:2[4,4] \n"
+rands = [
+  { sides = 6, value = 4 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# 父类形态 [S5] 零漂移
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[S5]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,6,1,1,1,1 ＞ 成功数:2, サツバツ判定[S5]:2[6,5] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# N（Normal 難度）+ [J]
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "N6[J]"
+success = true
+failure = false
+output = "(6B6>=4) ＞ 1,2,3,4,5,6 ＞ 成功数:3, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# UH（Ultra-Hard 難度）+ [L]
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "UH6[L]"
+success = true
+failure = false
+output = "(6B6>=6) ＞ 6,6,1,1,1,1 ＞ 成功数:2, LAN直結出目6数[=6]:2[6,6] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]
+
+# E（Easy 難度）+ [J]
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "E6[J]"
+success = true
+failure = false
+output = "(6B6>=3) ＞ 1,2,3,4,5,6 ＞ 成功数:4, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# 多段：记忆符 ×2
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J][L]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,6,2,3,4,5 ＞ 成功数:5, ジツ暴走[=1]:1[1], LAN直結出目6数[=6]:1[6] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+]
+
+# 多段：记忆符 + 倍率
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J][>=5*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,5,2,3,4,5 ＞ 成功数:5, ジツ暴走[=1]:1[1], 追加判定[>=5]:4[5,5] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+]
+
+# 多段顺序互换（顺序应反映在输出顺序上）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2][J]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,5,2,3,4,1 ＞ 成功数:4, 追加判定[>=5]:2[5], ジツ暴走[=1]:2[1,1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 1 },
+]
+
+# 三段共存
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[L][J][>=5*2]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,1,5,1,2,3 ＞ 成功数:4, LAN直結出目6数[=6]:1[6], ジツ暴走[=1]:2[1,1], 追加判定[>=5]:4[6,5] \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+]
+
+# 逗号连掷 × 追加判定（两次掷骰各带一段）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6,N6[J]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n(6B6>=4) ＞ 1,2,3,4,5,6 ＞ 成功数:3, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# 倍率段 ×2（两段倍率各自独立）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2][=1*3]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 5,1,2,3,4,1 ＞ 成功数:4, 追加判定[>=5]:2[5], 追加判定[=1]:6[1,1] \n"
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 1 },
+]
+
+# 暗骰 SSBX（S 前缀保护泛化的受益者）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "SSBX"
+success = false
+failure = false
+secret = true
+output = "サツバツ(1D6) ＞ (3) ＞ **急所破壊**：『痛打+1』、ニューロンダメージ1、精神力ダメージ2\n\n**「苦しみ抜いて死ぬがいい！」急所や内臓を情け容赦なく破壊！**\n『痛打+1』。\n敵の【体力】を減らした場合、付属効果として『ニューロンダメージ1』と『精神力ダメージ2』と『●部位損傷：胴体』を与える。\n"
+rands = [
+  { sides = 6, value = 3 },
+]
+
+# trim_after_whitespace：`[J] 備考` → 取空白前（追加判定保留）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J] 備考"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 1,2,3,4,5,6 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n"
+rands = [
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+]
+
+# trim_after_whitespace：`K6 [J]` → 截成 `K6`（追加判定丢失，与天狗抛异常方向一致）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6 [J]"
+success = true
+failure = false
+output = "(6B6>=2) ＞ 6,5,4,3,2,1 ＞ 成功数:5 \n"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=5*x] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*x]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=5*-1] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*-1]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=5*101] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*101]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[J,L] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J,L]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[J*2] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J*2]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[L1] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[L1]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[JX] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[JX]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=665+*2] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=665+*2]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=7*2] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=7*2]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=5**2] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5**2]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[] 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[]"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：K6[>=5*2 不响应
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*2"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+
+# <<< END GENERATED: T1.6 APPENDIX_EX
