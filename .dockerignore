@@ -1,8 +1,17 @@
-# Docker 构建上下文排除（Phase 4 启用）
-.git/
-references/src/
-data/
-vendor/bundle/
+# Docker 构建上下文排除（Phase 4 启用，T4.1 扩充）
+#
+# 匹配语义注意（2026-10-12 首次构建实测教训）：
+#   不带前缀的「名字/」模式会匹配**任意深度**的同名目录——旧条目 `data/`
+#   把 test/data/（toml 测试夹具）一并排除，构建闸门当场红（"No target found!"）。
+#   凡只想排除**上下文根**下的目录，一律用 `/` 前缀锚定（下同）。
+#   末尾的 *.db / *.log / .env 等「按名匹配任意深度」是**有意**的（dev 残留物）。
+/.git/
+/references/src/
+/data/
+/vendor/bundle/
+/.bundle/
+/tmp/
+# 凭据与 dev 残留（任意深度按名排除；.env 绝不进上下文）
 .env
 *.db
 *.db-wal

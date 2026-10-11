@@ -58,7 +58,15 @@
 #   TENGU_ENV=test bundle exec ruby bot/main.rb # 测试 token（.env 的 TELEGRAM_BOT_TOKEN_TEST）
 #
 # 注意：无 token 时以清晰错误退出（只报键名，不报值）。
+#
+# T4.1：Docker/管道语境 stdout/stderr 同步——非 TTY 时 Ruby 默认**块缓冲**，
+# 容器里 `docker logs` 会一直看不到启动序列（全攒在缓冲，等到写满或进程死）。
+# 容器入口直接跑本文件（Dockerfile CMD），故在此显式开启；本机调试用的
+# `-e '$stdout.sync=true; …'` 包装与之叠加也是幂等的。
 # ============================================================================
+
+$stdout.sync = true
+$stderr.sync = true
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
