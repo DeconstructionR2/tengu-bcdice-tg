@@ -2085,3 +2085,443 @@ rands = [
 
 
 # <<< END GENERATED: T1.7 EDITION1
+
+# >>> BEGIN GENERATED: T1.8 COVERAGE ED1
+# ---------------------------------------------------------------------------
+# T1.8 五维覆盖补齐：暗骰 / 超类透传 / 超类异常系
+#
+# 按**维度**复查后的补齐（不是按条数）。前四批（T1.4/T1.5/T1.6/T1.7）
+# 各自保证「本批新增命令面」的覆盖，但下面三类是横向的，散在四批里必漏：
+#   - **暗骰档**：S 前缀在每个命令族上都可用（1版 14 前缀两两无遮蔽、
+#     2版 SEISEN 的 S 前缀保护泛化）；
+#   - **超类透传**：父类命令经 Ex 类**逐字零改动**（HELP 与代码注释的
+#     「父类零改动」声明的可执行证据——生成器同时跑父类与 Ex 逐字比对，
+#     不一致即 abort，不是靠人肉看）；
+#   - **超类异常系**：父类的畸形输入（`SB@7` / `WS0` / `NRS_K`）在 Ex 类里
+#     同样不响应——扩展覆写的 prefixes_pattern 不得让非法命令诈尸
+#     （2版 `[KENHU]` 字符类 bug 正是这条维度的历史事故）。
+#
+# 注：`SBK` / `SSWSX` 列为**不响应**是正确行为而非缺陷——
+#   1版：`SBIOCYBER`/`BK` 以 `SB` 开头，`SBK`/`SBIOCYBER` 会被误判
+#         （这正是 1版 不采用 2版 保护形态的原因，见 prefixes_pattern 注释）；
+#   2版：`WSX` 是合法前缀，但 `SSWSX` 会先被 `(S)?` 吃掉 S 剩 `SWSX`
+#         ——保护分支先试 `WSX`，`SSWSX` 不以 WSX 开头 → 回溯 `(S)?`
+#         仍不匹配 → 不响应（2版 的既有语义，未改）。
+# ---------------------------------------------------------------------------
+
+# SCYBER：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SCYBER"
+output = "サイバネ狂気判定_1(9) ＞ **神経ノイズ/電子幻覚**\n**１段階目（軽度）：**このニンジャは【ワザマエ】−１の永続的ペナルティを受ける。また回避ダイスが−１個される。\n**２段階目（中等度）：**このニンジャは【ワザマエ】−２の永続的ペナルティを受ける。また回避ダイスが−２個される。\n**３段階目（重篤）：**このニンジャは【ワザマエ】−３の永続的ペナルティを受ける。また回避ダイスが−３個される。"
+secret = true
+rands = [
+  { sides = 6, value = 3 },
+  { sides = 6, value = 6 },
+]
+
+# SDKKI：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SDKKI"
+output = "暗黒カラテ衝動_1(6) ＞ **ソウルの悲鳴：**\nニンジャスレイヤーおよび妖刀ベッピンを持つダークニンジャと戦闘に入った場合、ソウルそのものが堪え難い恐怖を覚え、浮き足立ち、震え上がる（憑依者自身はその理由を明確には理解できないだろう）。これらの敵からこのPCに対する『近接攻撃』と『遠隔攻撃』は全て『ウカツ！』状態に対する攻撃とみなされて難易度が−１される。加えて、このPCがこれらの敵に対して行う『近接攻撃』および『遠隔攻撃』は、全て難易度が＋１される。【精神力】２を消費すれば、そのシナリオ中のみこの衝動を克服する。アーチ級ソウル憑依者の場合は【精神力】を２ではなく４消費する必要がある。"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+]
+
+# SJITSB：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SJITSB"
+output = "ジツ拡張サイバネ暴走_1(6) ＞ **「バカナ！ こんな、こんなはずでは……！」：**制御不能となったジツが暴発する！　術者は「ナムアミダブツ！」の効果（直ちに【精神力】に1ダメージ）を受ける。\n**そのジツが直ちにダメージを与えるようなものだった場合、そのダメージは全て＋１されるが、本来は味方を巻き込まないはずのジツであったとしても、味方を巻き込んでしまう（範囲ではなく敵単体をターゲットにするようなジツだった場合は、その敵に隣接する不運な味方がいた場合、その味方にも同じ効果が与えられてしまう。そのような味方が複数いる場合は１人をランダムに選択する）。**\nそれがムテキやヘンゲなど自分をターゲットにするジツだった場合は、術者は「ナムアミダブツ！」の効果に加え、【体力】に対して直ちに回避不能のD3ダメージを受けるが、効果が本来よりも１ターン長く継続する。特殊なジツの場合は、NMがこのどちらにするか決めること。"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+]
+
+# SJITSB_B：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SJITSB_B"
+output = "ジツ拡張サイバネ暴走_1(4) ＞ **「アイエエエエエエ！」：**オヒガンの奥底に眠るカツ・ワンソーの凝視を引き寄せ、術者のニンジャソウルが悲鳴をあげる（無論、ほとんどのニンジャにとっては何が起こっているのか理解できず、一時的な恐慌状態に陥るのみだ）。\n**術者は「ナムアミダブツ！」の効果（直ちに【精神力】に1ダメージを受ける）に加え、同じジツをこのシナリオ内で再使用するには、暴走事故の恐怖を克服するために本来よりも【精神力】を１多く支払わねばならなくなる（この効果は累積する）。**"
+secret = true
+rands = [
+  { sides = 6, value = 3 },
+]
+
+# SKRM：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SKRM"
+output = "カルマロンダリング_1(6) ＞ **『どれ、ワシがひとつ稽古をつけてやろう』：**\n君は今すぐラオモトと１対１でタタミの上で戦うことが許される（実際に戦闘すること）。\n**ラオモトとの戦闘終了後、このPCの【名声：ソウカイヤ】は＋１され、さらに【カラテ】/【ニューロン】/【ワザマエ】のいずれかを１上昇させされる。その能力値が６だった場合、『成長の壁（１）』を取り除き７となる。なお、この戦闘時は、双方ともに爆発四散も『サツバツ！』も発生せず、『サツバツ！』が決まった瞬間に戦闘終了となる。ラオモトに対して『サツバツ！』を決めた場合、腕を見込まれ【名声】が＋D３される。**"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+]
+
+# SKRM_B：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SKRM_B"
+output = "カルマロンダリング_1(4) ＞ **『面白い奴だ、これでサケでも飲むがいい！』：**\nラオモトは懐から無造作に万札束を取り出し、君に放り投げる。\n**このPCは【万札】10を得る。**"
+secret = true
+rands = [
+  { sides = 6, value = 3 },
+]
+
+# SKRM_C：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SKRM_C"
+output = "カルマロンダリング_1(9) ＞ **『いい面構えをしている。ヤクザの目だ』：**\n死線を乗り越え、人間性を捨ててゆく中で、君はいつしか元モータルとしての壁を超えていた。\n**このPCの【名声：ソウカイヤ】は＋１され、さらに【カラテ】/【ニューロン】/【ワザマエ】のいずれかを１成長させされる。その能力値が６だった場合、『成長の壁（１）』を取り除き７となる。**"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 3 },
+]
+
+# SSOUL：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSOUL"
+output = "ソウル鑑定_1(3) ＞ **グレーター級ニンジャソウル**：基本的にプラグイン環境の成長ルールはグレーター級を想定したものになっているため、特に有利な点も不利な点もない。\n【ジツ】値６（拡張サイバネの修を含まない素の値）の状態で『カルマロンダリング』を行い「グレーター級ソウル」と判定された場合、【ジツ】値を１上げる代わりに他の任意の能力値を２上げる（壁に到達しているならばそれを突破する）か、◉を２個獲得するか、もしくは能力値と◉を１ずつ得る。"
+secret = true
+rands = [
+  { sides = 6, value = 3 },
+]
+
+# SSUMMON：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSUMMON"
+output = "ソーマトリコール_1(9) ＞ **爆発四散！**ナムアミダブツ…"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 3 },
+]
+
+# SBK：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SBK"
+output = "生い立ち_1(6) ＞ **１６『○ブラインドタッチ』**：\nこの者はホームポジジョンの構えに精通し、高速物理タイプができる。もとは物理タイピング原理主義系のハッカー、もしくはエスイーなどのタイピング労働者だろう。このPCはキーボードが使えるハッキング判定時にダイスを１個追加で振れる。生体LANのボーナスを使用できる場合は重複不可（物理か論理かどちらか片方を選ぶこと）。"
+secret = true
+rands = [
+  { sides = 36, value = 6 },
+]
+
+# SEV4：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SEV4"
+output = "(4B6>=4) ＞ 6,6,6,6 ＞ 成功数4"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# SAT4：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SAT4"
+output = "(4B6>=4) ＞ 6,6,6,6 ＞ 成功数4 ＞ サツバツ!!"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# SEL4：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SEL4"
+output = "(4B6>=4) ＞ 6,6,6,6 ＞ 成功数4 + 4 ＞ 8"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# SSB：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSB"
+output = "サツバツ表(6) ＞ 「イイイヤアアアアーーーーッ！」ヤリめいたチョップが敵の胸を貫通！　さらに心臓を掴み取り、握りつぶした！　ナムアミダブツ！：敵は残り【体力】に関係なく即死する。残虐ボーナスにより【万札】がD6発生。この攻撃を【カルマ：善】のキャラに対して行ってしまった場合、【DKK】がD6上昇する。"
+secret = true
+rands = [
+  { sides = 6, value = 6 },
+]
+
+# SB：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SB"
+output = "サツバツ表(6) ＞ 「イイイヤアアアアーーーーッ！」ヤリめいたチョップが敵の胸を貫通！　さらに心臓を掴み取り、握りつぶした！　ナムアミダブツ！：敵は残り【体力】に関係なく即死する。残虐ボーナスにより【万札】がD6発生。この攻撃を【カルマ：善】のキャラに対して行ってしまった場合、【DKK】がD6上昇する。"
+rands = [
+  { sides = 6, value = 6 },
+]
+
+# NJ4：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "NJ4"
+output = "(4B6>=4) ＞ 2,3,6,4 ＞ 成功数2"
+rands = [
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 4 },
+]
+
+# NJ4[H]：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "NJ4[H]"
+output = "(4B6>=5) ＞ 6,6,6,6 ＞ 成功数4"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# EV4/2：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "EV4/2"
+output = "(4B6>=4) ＞ 6,6,6,6 ＞ 成功数4 ＞ カウンターカラテ!!"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# AT6[H]：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "AT6[H]"
+output = "(6B6>=5) ＞ 6,6,6,6,6,6 ＞ 成功数6 ＞ サツバツ!!"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# EL6[H]：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "EL6[H]"
+output = "(6B6>=5) ＞ 6,6,6,6,6,6 ＞ 成功数6 + 6 ＞ 12"
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# 异常系：SB@7 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SB@7"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SB@0 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SB@0"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SB@03 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SB@03"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SB1 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SB1"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SATSU 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SATSU"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SATSB 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SATSB"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：NJX 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "NJX"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：NJ4X 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "NJ4X"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：AT 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "AT"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：EL 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "EL"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：EV 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "EV"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：NJ0X 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "NJ0X"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：EV0X 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "EV0X"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：WS_ 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "WS_"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：KRM_ 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "KRM_"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：BIOCYBER_D 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "BIOCYBER_D"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SUMMON_B 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SUMMON_B"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SSNJ4 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSNJ4"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SSEV4 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSEV4"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SSAT4 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSAT4"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+# 异常系：SSEL4 不响应（扩展的前缀正则不得让非法命令诈尸）
+[[ test ]]
+game_system = "NinjaSlayerEx"
+input = "SSEL4"
+output = ""
+rands = [
+  { sides = 6, value = 1 },
+]
+
+
+# <<< END GENERATED: T1.8 COVERAGE ED1

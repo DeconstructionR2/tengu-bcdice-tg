@@ -488,8 +488,10 @@ def cross_validate!
 
     # ⑥ **无钳制 ⇒ 每个骰型的可达域必须 ⊆ 表跨度**。
     #    越界即不响应，所以「可达域落在表外」意味着那部分出目永远取不到表项
-    #    （要么是 ledger 笔误，要么是代码骰型写大了）。这是 EDITION1_REACHABLE
-    #    不变量的守卫，也是「绝不钳制」这一选择可行的前提。
+    #    （要么是 ledger 笔误，要么是代码骰型写大了）。这是「无钳制 ⇒ 可达域 ⊆
+    #    表跨度」不变量的守卫（常驻断言见 test/ledger_consistency_test.rb 的
+    #    test_edition1_reachable_domain_within_table_span），
+    #    也是「绝不钳制」这一选择可行的前提。
     lo = entry["min_index"]
     hi = entry["max_index"]
     CODE1_DICE[key].each do |suffix, spec|
@@ -811,6 +813,230 @@ def generate_edition1_error_block(cases = T17_ERROR_CASES)
     out << ""
   end
   [out.join("\n"), cases.size]
+end
+
+# ============================================================================
+# 4d. T1.8 用例生成：五维覆盖补齐（暗骰 / 异常系 / 超类透传）
+# ============================================================================
+#
+# **为什么按维度复查而不是数条数**（kimi T1.8 预警）：
+#   前四批各自保证「本批新增命令面」的覆盖，但下面三类是**横向**的，
+#   散在四批里必然漏：
+#     ① 暗骰档：只有 4 条（S-prefix 覆写的前缀覆盖面窄），表族里绝大多数
+#        命令没被证明「S 前缀可用」；
+#     ② 超类异常系：`SB@7` / `WS0` / `NRS_K` 等父类畸形输入在 Ex 类里
+#        也必须不响应（扩展的 prefixes_pattern 不能让非法命令诈尸）；
+#     ③ 超类透传**逐字一致**：HELP 与代码注释都声明「父类命令零改动」，
+#        这条声明需要有可执行的证据（同骰序下父类 == Ex 文本逐字相等）。
+#
+# 本块的每个用例都由**真实 eval 采集** output，且带自检：
+#   - 该响应的必须响应、该不响应的必须不响应（否则 abort）；
+#   - 透传对照必须同时跑父类与 Ex，逐字比对（不一致即 abort）。
+T18_COVERAGE = {
+  "NinjaSlayer2Ex" => {
+    game_system: "NinjaSlayer2Ex",
+    parent: "NinjaSlayer2",
+    # 暗骰：按前缀族各取一条（含 2D6 与 d36 表，确保骰型匹配）。
+    #
+    # 覆盖面原则：**每个**自注册前缀至少一条暗骰用例 + 父类各判定族各一条
+    # （否则「某前缀的 S 形态能不能用」就靠运气——这正是 T1.7 的 prefixes_pattern
+    # 覆写最需要守住的性质，却散在四批里只覆盖了 4 条）。
+    secret: [
+      # カルマ 5 派阀（4 派阀骰型相同，抽 KRZ/KRA/KRY 三条 + 2 个非默认骰型）
+      ["SKRS",   [[2, 3]]],       # 1D3（默认 A）
+      ["SKRZ",   [[2, 3]]],       # 1D3
+      ["SKRA",   [[2, 3]]],       # 1D3
+      ["SKRO",   [[2, 3]]],       # 1D3
+      ["SKRY",   [[2, 3]]],       # 1D3
+      ["SKRS_B", [[3, 6]]],       # 1D6
+      ["SKRS_C", [[3, 6]]],       # 1D6+1
+      ["SKRO_D", [[2, 3]]],       # 1D3+3
+      # NSRS 発狂（2 个骰型）
+      ["SNSRS",   [[2, 3]]],      # 1D3
+      ["SNSRS_B", [[3, 6]]],      # 1D6
+      # 天狗呈現版 / キャラメイク（1D6 与 1D36 各取）
+      ["SWSX",  [[6, 6]]],
+      ["SNJB",  [[6, 36]]],
+      ["SNJK",  [[6, 36]]],
+      ["SNJS",  [[3, 6]]],
+      ["SNJI",  [[3, 6]]],
+      ["SNJC",  [[3, 6]]],
+      ["SNJN",  [[3, 6]]],
+      # T1.6 追加判定扩展（记忆符 + 多段）
+      ["SK6[J]",      [[6, 6]] * 6],
+      ["SK6[J][L]",   [[6, 6]] * 6],
+      ["SK6[>=5*2]",  [[6, 6]] * 6],
+      # 父类判定族（K / WS / SB）与父类 NRS 判定
+      ["SK6",     [[6, 6]] * 6],
+      ["SWS8",    [[6, 6], [2, 6]]],
+      ["SSB",     [[6, 6]]],
+      ["SSBX",    [[3, 6]]],
+      ["SNRS_E4", [[6, 6], [1, 6], [6, 6], [2, 6]]],
+    ],
+    # 父类透传**逐字一致**（同骰序，父类 vs Ex）
+    passthrough: [
+      ["SB",     [[6, 6]]],
+      ["WSE",    [[3, 6]]],
+      ["SB@6",   []],
+      ["WSE@4",  []],
+      ["WS8",    [[6, 6], [2, 6]]],
+      ["WS1",    [[2, 6], [2, 6]]],
+      ["NRS_E4", [[6, 6], [1, 6], [6, 6], [2, 6]]],
+      ["NRS@7",  []],
+      ["UH4",    [[6, 6]] * 4],
+      ["K6",     [[6, 6]] * 6],
+    ],
+    # 超类异常系（Ex 类里也必须不响应：扩展的 prefixes_pattern 不得让
+    # 非法输入诈尸——1版 的 `[KENHU]` 类 bug 就是前缀正则乱吃的产物）
+    error: [
+      "SB@7", "SB@0", "SB@03", "SB1", "SATSU", "SBX@3", "SSWSX", "SBK",
+      "WS0", "WS13", "WS99", "WSE0", "WSE7", "WSE@7", "WSE@0",
+      "NRS_K", "NRS_K4", "NRS_E0", "NRS_X", "NRSX", "NSRS@3", "SEISEN",
+      "KRSX", "NJXX",
+    ]
+  },
+  "NinjaSlayerEx" => {
+    game_system: "NinjaSlayerEx",
+    parent: "NinjaSlayer",
+    # 暗骰：**9 张表各至少一条**（T1.7 的暗骰档只覆盖了 4 条，
+    # 剩下 JITSB_B / KRM_B / KRM_C / SOUL 三族无 S 形态证据）
+    # + 父类各判定族 + 父类 SB 的双 S 形态。
+    secret: [
+      ["SCYBER",    [[3, 6], [6, 6]]],  # 2D6 表
+      ["SDKKI",    [[6, 6]]],           # 1D6
+      ["SJITSB",   [[6, 6]]],           # 1D6（默认 A）
+      ["SJITSB_B", [[3, 6]]],           # 1D6+1
+      ["SKRM",     [[6, 6]]],           # 1D6
+      ["SKRM_B",   [[3, 6]]],           # 1D6+1
+      ["SKRM_C",   [[6, 6], [3, 6]]],   # 2D6
+      ["SSOUL",    [[3, 6]]],           # 1D6
+      ["SSUMMON",  [[6, 6], [3, 6]]],   # 2D6 表
+      ["SBK",      [[6, 36]]],          # d36 表
+      ["SEV4",     [[6, 6]] * 4],       # 父类 EV 的暗骰
+      ["SAT4",     [[6, 6]] * 4],       # 父类 AT 的暗骰（出 6 → サツバツ）
+      ["SEL4",     [[6, 6]] * 4],       # 父类 EL 的暗骰
+      ["SSB",      [[6, 6]]],           # 父类 SB 表的**双 S** 暗骰
+    ],
+    passthrough: [
+      ["SB",  [[6, 6]]],
+      ["NJ4", [[2, 6], [3, 6], [6, 6], [4, 6]]],
+      ["NJ4[H]", [[6, 6]] * 4],
+      ["EV4/2", [[6, 6]] * 4],
+      ["AT6[H]", [[6, 6]] * 6],
+      ["EL6[H]", [[6, 6]] * 6],
+    ],
+    error: [
+      "SB@7", "SB@0", "SB@03", "SB1", "SATSU", "SATSB",
+      "NJX", "NJ4X", "AT", "EL", "EV", "NJ0X", "EV0X",
+      "WS_", "KRM_", "BIOCYBER_D", "SUMMON_B",
+      # 父类 NJ 在 1版 只支持单 S 暗骰（`SSNJ4` 不响应，父类自身亦然——
+      # 实测见 T1.8 覆盖矩阵 §维度「暗骰」）。钉住它，防止日后有人
+      # 「顺手修好」而与父类行为分家（这正是 passthrough 要防的方向）。
+      "SSNJ4", "SSEV4", "SSAT4", "SSEL4",
+    ]
+  }
+}.freeze
+
+# 渲染一条「正常响应」的 toml 用例（真实 eval 采集 + 骰序显式）。
+def render_t18_case(game_system, input, rolls, output, secret, success = false, failure = false)
+  lines = []
+  lines << "[[ test ]]"
+  lines << "game_system = \"#{game_system}\""
+  lines << "input = \"#{toml_escape(input)}\""
+  lines << "output = \"#{toml_escape(output)}\""
+  lines << "secret = true" if secret
+  lines << "success = true" if success
+  lines << "failure = true" if failure
+  lines << "rands = ["
+  rolls.each { |(value, sides)| lines << "  { sides = #{sides}, value = #{value} }," }
+  lines << "]"
+  lines.join("\n")
+end
+
+# @param spec [Hash] T18_COVERAGE 的一项
+# @return [Array(String, Integer)] toml 文本 + 条数
+def generate_t18_coverage_block(spec)
+  gs_id = spec.fetch(:game_system)
+  parent_id = spec.fetch(:parent)
+  out = []
+  total = 0
+
+  # ---- ① 暗骰档 ----
+  spec.fetch(:secret).each do |input, rolls|
+    output, result = eval_case_for(gs_id, input, rolls)
+    abort_with("T1.8 #{input}: 暗骰档必须响应，但真实 eval 为 nil（prefixes_pattern 或用例失效）") if output.nil?
+    abort_with("T1.8 #{input}: secret 标志应为 true，实为 #{result.secret?}") unless result.secret?
+
+    out << "# #{input}：暗骰档（S 前缀）——证明本命令面支持 S 暗骰形态"
+    # ⚠ success / failure 也必须透传：`SK6[J]` / `SWS8` 是带成败语义的命令，
+    #   漏写这两个字段会让 runner 的 `assert_equal(data[:success], result.success?)`
+    #   拿 nil/ false 去比 true → 用例假红（第一版就踩到了）。
+    out << render_t18_case(gs_id, input, rolls, output, true, result.success?, result.failure?)
+    out << ""
+    total += 1
+  end
+
+  # ---- ② 超类透传逐字一致（父类 vs Ex，同骰序）----
+  spec.fetch(:passthrough).each do |input, rolls|
+    ex_output, ex_result = eval_case_for(gs_id, input, rolls)
+    pa_output, pa_result = eval_case_for(parent_id, input, rolls)
+    abort_with("T1.8 #{input}: 超类命令经 Ex 类应响应，实为 nil") if ex_output.nil?
+    abort_with("T1.8 #{input}: 父类应响应，实为 nil（父类 toml 与本用例不匹配）") if pa_output.nil?
+    abort_with("T1.8 #{input}: 超类透传不一致——Ex #{ex_output[0, 60].inspect} vs 父类 #{pa_output[0, 60].inspect}") \
+      unless ex_output == pa_output
+    abort_with("T1.8 #{input}: secret 标志不一致 Ex=#{ex_result.secret?} 父类=#{pa_result.secret?}") \
+      unless ex_result.secret? == pa_result.secret?
+
+    out << "# #{input}：超类透传——同骰序下父类与 Ex 的输出逐字相同（扩展零改动的可执行证据）"
+    out << render_t18_case(gs_id, input, rolls, ex_output, ex_result.secret?, ex_result.success?, ex_result.failure?)
+    out << ""
+    total += 1
+  end
+
+  # ---- ③ 超类/畸形异常系（必须不响应）----
+  spec.fetch(:error).each do |cmd|
+    unless cmd.match?(/\A[A-Za-z0-9_@.!+\-]+\z/)
+      abort_with("T1.8 异常系条目含非法字符（只允许裸 ASCII 命令）：#{cmd.inspect}")
+    end
+
+    gs = BCDice.game_system_class(gs_id).new(cmd)
+    gs.randomizer = RandomizerMock.new([[6, 6], [6, 6], [6, 36]])
+    # ⚠ **必须 rescue**：若这条其实**会响应**，它会去掷骰，
+    #   而我们给的骰源未必匹配该命令的骰型（1D3 表拿到 6 面 / 1D36 表拿到 6 面）
+    #   → RandomizerMock 抛 "unexpected sides"，堆栈盖住真正的错因。
+    #   这里的目的是「发现名单错了」而不是「模拟它怎么掷」，
+    #   故一律吞掉异常、按「有输出」处理并 abort。
+    responded = begin
+      !gs.eval.nil?
+    rescue StandardError
+      true # 真的掷了骰 = 真的响应了
+    end
+    abort_with("T1.8 #{cmd}: 本应不响应，但真实 eval 有了输出——异常系名单已过时（或该命令本就是合法的暗骰）") if responded
+
+    out << "# 异常系：#{cmd} 不响应（扩展的前缀正则不得让非法命令诈尸）"
+    out << "[[ test ]]"
+    out << "game_system = \"#{gs_id}\""
+    out << "input = \"#{cmd}\""
+    out << "output = \"\""
+    out << "rands = ["
+    out << "  { sides = 6, value = 1 },"
+    out << "]"
+    out << ""
+    total += 1
+  end
+
+  [out.join("\n"), total]
+end
+
+# @param game_system [String]
+# @param input [String]
+# @param rolls [Array<Array(Integer,Integer)>]
+# @return [Array(String, Result, nil)]
+def eval_case_for(game_system, input, rolls)
+  gs = BCDice.game_system_class(game_system).new(input)
+  gs.randomizer = RandomizerMock.new(rolls.map(&:dup))
+  result = gs.eval
+  [result&.text, result]
 end
 
 # ============================================================================
@@ -1394,6 +1620,21 @@ END_MARK_T16 = "# <<< END GENERATED: T1.6 APPENDIX_EX"
 BEGIN_MARK_T17 = "# >>> BEGIN GENERATED: T1.7 EDITION1"
 END_MARK_T17 = "# <<< END GENERATED: T1.7 EDITION1"
 
+# T1.8 第五个/第六个独立哨兵块：**五维覆盖补齐**（暗骰 / 异常系 / 多段）。
+#
+# 与前四块的关系：T1.4~T1.7 各批只保证「本批命令面」的覆盖，
+# 而「超类命令在 Ex 类里仍逐字一致」这条声明、以及各表族的**暗骰档**
+# 是横向维度，散在四批里必然漏。T1.8 按**维度**复查后把缺口集中到本块。
+#
+# 落两个文件（各自单 game_system）：
+#   - BEGIN_MARK_T18     → NinjaSlayer2Ex.toml
+#   - BEGIN_MARK_T18_ED1 → NinjaSlayerEx.toml
+BEGIN_MARK_T18 = "# >>> BEGIN GENERATED: T1.8 COVERAGE"
+END_MARK_T18 = "# <<< END GENERATED: T1.8 COVERAGE"
+
+BEGIN_MARK_T18_ED1 = "# >>> BEGIN GENERATED: T1.8 COVERAGE ED1"
+END_MARK_T18_ED1 = "# <<< END GENERATED: T1.8 COVERAGE ED1"
+
 # 把 block 塞进 (begin, end) 哨兵；不存在则追加到文件末尾。
 #
 # @param existing [String] 当前文件全文
@@ -1665,12 +1906,62 @@ else
   t17_total = 0
 end
 
+# --- 块 5：T1.8 五维覆盖补齐（**另一个游戏系统，落 NinjaSlayerEx.toml**）---
+#
+# 与 T1.7 同理跨系统：本块对每个 Ex 类各有一份 spec，而 runner 要求
+# 「文件内 game_system 唯一」。故在本进程里只写**本文件所属**的那一份：
+#   TARGET_FILE 是 1版 那份 → 写 1版 的暗骰/超类透传/异常系；
+#   TARGET_FILE 是 2版 那份 → 写 2版 的（K6 / NSRS / KR* / NJ* / SB / WS …）。
+# 默认全量时 2版 先写、由末尾自派生子进程再写 1版。
+t18_spec_key = if File.expand_path(TARGET_FILE) == EDITION1_DEFAULT_TARGET
+                 "NinjaSlayerEx"
+               else
+                 "NinjaSlayer2Ex"
+               end
+t18_marks = if t18_spec_key == "NinjaSlayerEx"
+              [BEGIN_MARK_T18_ED1, END_MARK_T18_ED1]
+            else
+              [BEGIN_MARK_T18, END_MARK_T18]
+            end
+
+t18_body, t18_count = generate_t18_coverage_block(T18_COVERAGE.fetch(t18_spec_key))
+puts "[gen_table_toml] T1.8 五维覆盖（#{t18_spec_key}）暗骰 + 超类透传 + 异常系 #{t18_count} 条"
+
+t18_block = <<~HEADER
+  # ---------------------------------------------------------------------------
+  # T1.8 五维覆盖补齐：暗骰 / 超类透传 / 超类异常系
+  #
+  # 按**维度**复查后的补齐（不是按条数）。前四批（T1.4/T1.5/T1.6/T1.7）
+  # 各自保证「本批新增命令面」的覆盖，但下面三类是横向的，散在四批里必漏：
+  #   - **暗骰档**：S 前缀在每个命令族上都可用（1版 14 前缀两两无遮蔽、
+  #     2版 SEISEN 的 S 前缀保护泛化）；
+  #   - **超类透传**：父类命令经 Ex 类**逐字零改动**（HELP 与代码注释的
+  #     「父类零改动」声明的可执行证据——生成器同时跑父类与 Ex 逐字比对，
+  #     不一致即 abort，不是靠人肉看）；
+  #   - **超类异常系**：父类的畸形输入（`SB@7` / `WS0` / `NRS_K`）在 Ex 类里
+  #     同样不响应——扩展覆写的 prefixes_pattern 不得让非法命令诈尸
+  #     （2版 `[KENHU]` 字符类 bug 正是这条维度的历史事故）。
+  #
+  # 注：`SBK` / `SSWSX` 列为**不响应**是正确行为而非缺陷——
+  #   1版：`SBIOCYBER`/`BK` 以 `SB` 开头，`SBK`/`SBIOCYBER` 会被误判
+  #         （这正是 1版 不采用 2版 保护形态的原因，见 prefixes_pattern 注释）；
+  #   2版：`WSX` 是合法前缀，但 `SSWSX` 会先被 `(S)?` 吃掉 S 剩 `SWSX`
+  #         ——保护分支先试 `WSX`，`SSWSX` 不以 WSX 开头 → 回溯 `(S)?`
+  #         仍不匹配 → 不响应（2版 的既有语义，未改）。
+  # ---------------------------------------------------------------------------
+
+  #{t18_body}
+HEADER
+
+updated = splice_block(updated, t18_block, t18_marks[0], t18_marks[1])
+
 File.write(TARGET_FILE, updated, encoding: "UTF-8")
 parts = []
 parts << "T1.4 #{count14} 条" if want_karma.any?
 parts << "T1.5 #{t15_total} 条" if want_chara.any?
 parts << "T1.6 #{t16_count} 条" if t16_count.positive?
 parts << "T1.7 #{t17_total} 条" if write_ed1
+parts << "T1.8 #{t18_count} 条"
 puts "[gen_table_toml] ✓ 已写入 #{TARGET_FILE.sub("#{ROOT}/", '')}（#{parts.join(' + ')}）"
 
 # ⚠ **默认全量（不加 --tables）要写两个 toml**，第二个必须用「只选 1版 表」

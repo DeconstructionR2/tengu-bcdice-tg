@@ -37,7 +37,9 @@
 #   - 9 表**均无 `+x` 補正参数**（与 2版 KRS 族的 `@±x` 形态不同，
 #     本批命令面只有 `表名` / `表名_X` / `表名@n` 三种，无補正分支）；
 #   - 钳制标注 `(raw→clamped)（クランプ）` 在本批**永远不可达**
-#     （掷骰可达域恒 ⊆ 表跨度，见下方 EDITION1_REACHABLE），输出现里出现
+#     （掷骰可达域恒 ⊆ 表跨度；该不变量由 test/ledger_consistency_test.rb 的
+#     test_edition1_reachable_domain_within_table_span 常驻断言钉住，
+#     另有 scripts/gen_table_toml.rb §4⑥ 的生成期交叉校验），输出现里出现
 #     不可达分支即为死代码；
 #   - 与 T1.5 CHARAMAKE 同型 → 复用其已验证的「先查表、越界即 nil」写法。
 #
@@ -200,24 +202,48 @@ module BCDice
         - SUMMON      ソーマトリコール        A…2D6
         - BK          生い立ち                A…1D36
 
+        --- 各表の収録範囲（`@出目` が応答する範囲）---
+        WS          1〜6
+        JITSB       1〜7
+        DKKI        1〜6
+        KRM         1〜12
+        CYBER       2〜12
+        BIOCYBER    1〜6
+        SOUL        1〜6
+        SUMMON      2〜12
+        BK          1〜36
+
         例：
         - KRM_C       → 2D6 を振ってカルマロンダリング表を引く
         - JITSB       → 1D6 を振ってジツ拡張サイバネ暴走表を引く
         - CYBER       → 2D6 を振ってサイバネ狂気判定表を引く
         - BK@12       → 振らずに生い立ち表の 12 番を表示
         - WS@3        → 振らずに Wasshoi!エントリー の 3 番を表示
+        - CYBER@2     → 振らずにサイバネ狂気判定表の 2 番を表示（2D6 表の下限）
 
         ※ **使える `_X` は表ごとに決まっています**（上記のとおり）。
           例えば `WS_C` / `DKKI_C` / `JITSB_C` / `KRM_D` は応答しません。
-        ※ `@出目` は**表の収録範囲内**だけ応答します
-          （1D6 表＝1〜6、2D6 表＝2〜12、1D36 表＝1〜36）。
-          範囲外（例：WS@0 / WS@7 / CYBER@1 / BK@37）は応答しません。
-          先頭の 0 も範囲外です（例：WS@03 は応答しません）。
-        ※ 本 9 表に**補正値**（`@+3` 等の掷骰補正）は**ありません**。
-          天狗 1版この 9 表に可変値（+x）が無いため、補正も钳制も発生しません。
+        ※ `@出目` は**上の「収録範囲」表に書いた範囲内だけ**応答します。
+          **表ごとに範囲は違います**——1D6 の表でも JITSB は 1〜7（7 項目）、
+          KRM は 1〜12、2D6 の表でも 1D6 の表なら 1〜6 から始まりません。
+          CYBER / SUMMON は 2D6 表なので**下限が 2**（`CYBER@1` は応答しません）。
+          範囲外（例：`WS@0` / `WS@7` / `JITSB@8` / `CYBER@1` / `BK@37`）は応答しません。
+          先頭の 0 も範囲外です（例：`WS@03` は応答しません）。
+        ※ 本 9 表に**補正値**（`@+3` 等のダイス補正）は**ありません**。
+          天狗 1版この 9 表に可変値（+x）が無いため、補正もクランプも発生しません。
           出目が表の範囲外に出た場合はdice を振り直してください。
-        ※ 親類的命令（NJ / EV / AT / EL / SB）は**一切変更していません**。
-        ※ 上の親類ヘルプの例（NJ4 / EV5/3 / AT6[H] / EL6[H]）もそのまま使えます。
+        ※ **同じ `@` でも意味が違います**：
+          本システムの `@n` は「**定値表示**」（dice を振らない）ですが、
+          『ニンジャスレイヤーTRPG 2版 拡張』のカルマロンダリング 5 派閥の
+          `@±n` は「**補正値**」（dice に足してから引く）です。
+          見分け方はシステムと表名で判断してください。
+        ※ **`WS` は本システム（1版拡張）だけのコマンド**です。
+          本システムでの `WS` は 1版の Wasshoi!エントリー表（出目 1〜6）。
+          2版の各システムで `WS` / `WSE` を打つと**別のコマンド**
+          （2版の Wasshoi!判定 / エントリー表）に当たります。群のシステム設定を
+          切り替えたときは `WS` の意味が変わる点にご注意ください。
+        ※ 親クラスのコマンド（NJ / EV / AT / EL / SB）は**一切変更していません**。
+        ※ 上の親クラスメッセージの例（NJ4 / EV5/3 / AT6[H] / EL6[H]）もそのまま使えます。
         TEXT
 
         parent_help + extension_help
@@ -300,7 +326,7 @@ module BCDice
         "BIOCYBER" => 1, "SOUL" => 1, "SUMMON" => 2, "BK" => 1
       }.freeze
 
-      # 每张表的骨架选型（T1.7 拍板：9 表**全部**无钳制）。
+      # 每张表的骨架选型（T1.7 拍板：9 表**全部**无钳制；T1.8 承重构）。
       #
       # 把「选型」本身也登记成数据而非散落在注释里，好让常驻测试能断言
       # 「骨架选型与 ledger 的 datarange 登记一致」——有人给某张表加上
@@ -310,7 +336,27 @@ module BCDice
       # 取值：
       #   :no_clamp  无钳制（天狗 else 分支：data[出目]，越界 → 不响应）
       #   :clamp     钳制到 datarange 端点（天狗 isTableAdditionValue 分支）
+      #
+      # ⚠ **T1.8：这张表是「钳制行为的唯一开关」**（承重构）。
+      #   重构前 proc_edition1_table 只有一条代码路径（恒不钳制），常量是**注释旁证**：
+      #   把它从 :no_clamp 改成 :clamp，运行时行为**一点不变**、测试全绿
+      #   ——即「选型」与「行为」之间没有强制关联，是一张假账。
+      #   现改为 proc_edition1_table 按 EDITION1_SKELETONS.fetch(key) 分发：
+      #     · :no_clamp → 现有路径（index = sum - min_index，越界 → nil 不响应）
+      #     · :clamp    → 钳制分支（**尚未存在**，须先补 DATARANGE 才可达）
+      #   → 想给某张表加钳制，**必须先翻这张常量**（若同时给 ledger 补 datarange），
+      #     而翻常量的那一刻 test_edition1_skeletons_are_all_no_clamp 当场红
+      #     （9 表恒 :no_clamp 是 T1.7 的拍板结论，不是随手写的初值）。
+      #   篡改实验（把某表改 :clamp → 断言红）见 docs/t1.8-coverage-matrix.md §P4。
       EDITION1_SKELETONS = EDITION1_TABLES.to_h { |k| [k, :no_clamp] }.freeze
+
+      # :clamp 分支需要的钳制边界。**刻意不定义**：T1.7 的 9 表 ledger datarange
+      # 全为 nil（天狗 dice 字面量无 "+x" → isTableAdditionValue 恒不置位），
+      # 凭空造一个可钳边界是假信息。表里第一次出现 :clamp 时，
+      # 上面那段注释与本常量一并改成 ledger 的真实登记。
+      # （守卫：scripts/gen_table_toml.rb §4① 已校验
+      #   「:clamp ⟺ ledger 有 datarange、:no_clamp ⟺ ledger 无 datarange」，
+      #   常量与台账单方面漂移都会在生成期 abort。）
 
       # 1版 9 表的命令正则。
       #
@@ -342,8 +388,19 @@ module BCDice
       #
       # 理由：1版父类无 `[KENHU]` 字符类、14 个前缀两两无遮蔽，
       # 「`(S)?` 吃掉 S 后剩余串误命中另一前缀」这条 2版 的失败路径不存在；
-      # 而套用 2版形态会让保护分支抢在 `(S)?` 之前命中 `SB`，
-      # **回归掉合法暗骰 `SBK` / `SBIOCYBER`**（实测 3 条）。
+      # 而套用 2版 形态会让保护分支抢在 `(S)?` 之前命中 `SB`，
+      # **回归掉合法暗骰**。
+      #   风险集 = { 非 S 前缀 q | "S"+q 以某 S 前缀开头 } = [BIOCYBER, BK]
+      #   （因 1版 只有 SB / SOUL / SUMMON 三个 S 前缀）：
+      #     · **精确风险集**（2 个风险前缀 × 6 种后缀形态
+      #       = 裸 / `_` / `_A` / `@` / `@1` / `@36`，即
+      #       test/engine_structure_test.rb 的
+      #       test_edition1_two_version_form_would_regress_secret_commands
+      #       所枚举的口径）= **12 条，全部回归**；
+      #     · **宽候选集**（2 个风险前缀 × 22 种后缀形态 = 上述 6 种 +
+      #       该文件的 `suffixes` 列表其余 15 种 + 空串）= **44 条，全部回归**。
+      #   两个口径数字不同是因为**枚举的后缀形态集合不同**，
+      #   不是同一集合数出了两个答案——引用数字时务必带上口径。
       # 本形态保留 `(S)?` 分组 → 全部暗骰形态与引擎原生逐条一致，
       # 同时把「最长前缀先试」固定下来，杜绝未来的前缀遮蔽。
       #
@@ -427,9 +484,16 @@ module BCDice
       #   掷骰  : roll(times, sides) + bonus → sum → items[sum - min_index]
       #   定値  : items[fixed - min_index]（不掷骰，天狗 /fnd 等价）
       #
-      # ⚠ **绝不钳制**（见文件头 §1）：本批 9 表 datarange 恒为 nil
-      #   （天狗 dice 字面量无 "+x" → isTableAdditionValue 不置位 → 走
-      #   else 分支 `data[出目]`），故越界一律**不响应**，与 T1.5 CHARAMAKE 同型。
+      # ⚠ **骨架按 EDITION1_SKELETONS.fetch(key) 分发**（T1.8 承重构）：
+      #   :no_clamp → 本批现状（9 表全部如此，见文件头 §1 与常量注释）
+      #   :clamp    → 钳制分支，**本批不可达**（没有 EDITION1_DATARANGE，
+      #               一旦被选中会抛 KeyError 而不是静默走错分支——
+      #               「翻常量却忘了补边界」必须当场炸，不许降级成假行为）
+      #
+      # 分布在这里而不是散落两处，是为了让「选型常量」成为**行为的唯一开关**：
+      #   重构前本方法只有一条路径（恒不钳制），EDITION1_SKELETONS 只是注释旁证——
+      #   改常量不改行为、测试照样全绿（一张假账）。见常量处的注释与
+      #   docs/t1.8-coverage-matrix.md §P4 的篡改实验。
       #
       # 输出骨架（与 1版父类自己的 SB 表 `サツバツ表(1) ＞ …` 同形）：
       #   `<日文表名>(<出目>) ＞ <正文>`
@@ -445,6 +509,9 @@ module BCDice
         spec = EDITION1_DICE_TYPES[key]&.[](dice_type_s)
         return nil if spec.nil? # 未知表 / 该表不支持的骰型后缀（如 WS_C）
 
+        # 骨架选型（fetch 而非 []：键缺失 = 常量与 EDITION1_TABLES 脱钩，当场 KeyError）
+        skeleton = EDITION1_SKELETONS.fetch(key)
+
         min_index = EDITION1_MIN_INDEX.fetch(key)
         items = translate("NinjaSlayerEx.table.#{key}.items")
         label = edition1_table_label(key)
@@ -452,9 +519,29 @@ module BCDice
         if fixed_s.nil?
           # 掷骰路径：骰型常量先计入绝对出目，再按表级 min_index 索引。
           sum = @randomizer.roll_sum(spec[:times], spec[:sides]) + spec[:bonus]
-          body = items[sum - min_index]
-          # 掷骰可达域恒 ⊆ 表跨度（EDITION1_REACHABLE 的不变量，
-          # 由 ledger_consistency_test.rb 常驻断言），故此处理论不可达；
+          body = case skeleton
+                 when :no_clamp
+                   items[sum - min_index]
+                 when :clamp
+                   # ⚠ **死分支**（T1.8 承重构时新增，本批 9 表无一命中）。
+                   #   它存在的唯一目的，是让「把某表改成 :clamp」这个动作
+                   #   **立刻产生可见后果**，而不是静默沿用 no_clamp 路径。
+                   #   钳制边界尚不存在（ledger 9 条 datarange 全为 nil），
+                   #   故这里 fetch 一个**不存在的常量**并让它抛 KeyError：
+                   #   「翻了选型常量却忘了补 datarange」必须当场炸，
+                   #   绝不降级成「钳了但钳到 0」这类假行为。
+                   #   真要启用：先在 ledger 补该表 datarange
+                   #   （scripts/gen_table_toml.rb §4① 会强制两处一致），
+                   #   再定义 EDITION1_DATARANGE（见常量区注释）。
+                   range = EDITION1_DATARANGE.fetch(key)
+                   items[sum.clamp(range[:min], range[:max]) - min_index]
+                 else
+                   raise ArgumentError, "#{key} 的骨架选型未知：#{skeleton.inspect}"
+                 end
+          # 掷骰可达域恒 ⊆ 表跨度（该不变量的常驻断言见
+          # test/ledger_consistency_test.rb 的
+          # test_edition1_reachable_domain_within_table_span），
+          # 故 :no_clamp 分支里此处理论不可达；
           # 仍保留守卫：yml 若被手工改短，守卫会让它安静地不响应，
           # 而不是产出 nil 文本或 IndexError 冒泡（父类 eval 有 rescue，
           # 会吞成「语法错误」、掩盖真因）。

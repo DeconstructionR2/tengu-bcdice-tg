@@ -396,6 +396,148 @@ class TestLedgerConsistency < Test::Unit::TestCase
   end
 
   # ==========================================================================
+  # ⑧b HELP 的收录范围 ⟺ `min_index + items.length`（**P1 的可执行断言**）
+  #
+  # 问题来源（kimi-code T1.7 评审 P1）：原 HELP 用散文写
+  # 「1D6 表＝1〜6、2D6 表＝2〜12、1D36 表＝1〜36」——**散文与实际不符**：
+  #   · JITSB 是 1D6 表却收录 1〜**7**（7 条），散文被骰型骗了；
+  #   · KRM 是 1D6 表却收录 1〜**12**（`KRM_C` 是 2D6，表跨度按表级定）。
+  # 玩家照散文判断 `JITSB@7` 会以为越界（其实合法）、照散文以为 `KRM@12` 越界。
+  #
+  # 为什么必须写成断言（kimi 预警：**散文没有断言必漂移**）：
+  #   HELP 是纯文案，改它不触发任何编译/类型错误；只要没人盯着，
+  #   改了 yml 的 items 长度而忘了改 HELP，文档与行为就分家了。
+  #   故本断言从 **yml 实际 items 数 + EDITION1_MIN_INDEX** 反推范围，
+  #   再逐条比对 HELP 里的文字——两者恒等式一旦不成立当场红。
+  #
+  # 判定方式：从「収録範囲」小节里抽出 `<KEY> <lo>〜<hi>` 形式的行，
+  # 与 min_index…min_index+items.length-1 逐条 assert_equal。
+  # ==========================================================================
+  def test_edition1_help_ranges_match_min_index_plus_items
+    ex_help = KLASS1::HELP_MESSAGE
+
+    # 只在扩展段里找（父类 HELP 不含这张表，小节标题也不在父类里）
+    section = ex_help[/--- 各表の収録範囲.*?(?=\n\n|\z)/m]
+    assert_not_nil(section, "HELP_MESSAGE 缺少「各表の収録範囲」小节（P1 要求逐表列范围）")
+
+    # 解析出 HELP 声称的范围：{"WS" => [1, 6], ...}
+    claimed = section.scan(/^(\w+)\s+(\d+)〜(\d+)$/).to_h do |key, lo, hi|
+      [key, [lo.to_i, hi.to_i]]
+    end
+    assert_equal(EDITION1_KEYS.sort, claimed.keys.sort,
+                 "HELP 的收录范围表必须**逐表**列出 9 张表（不多不少）")
+
+    EDITION1_KEYS.each do |key|
+      min_i = KLASS1::EDITION1_MIN_INDEX.fetch(key)
+      items = I18n.t("NinjaSlayerEx.table.#{key}.items", locale: :ja_jp, raise: true)
+      want = [min_i, min_i + items.length - 1]
+
+      assert_equal(want, claimed.fetch(key),
+                   "#{key} 的 HELP 收录范围与「min_index + items.length」不符：" \
+                   "yml items=#{items.length}、min_index=#{min_i} → 应为 #{want.join('〜')}；" \
+                   "（散文与行为分家——改 yml 或改 EDITION1_MIN_INDEX 都会漂到这里）")
+
+      # 端点文字之外再钉一层：HELP 里给出的边界必须**真的能响应**，
+      # 且紧邻的越界值必须**真的不响应**（端到端，不依赖 HELP 文字）。
+      inst = KLASS1.new("#{key}@#{want[0]}")
+      assert_not_nil(inst.eval, "#{key}@#{want[0]}（HELP 声称的下限）应响应")
+
+      inst_hi = KLASS1.new("#{key}@#{want[1]}")
+      assert_not_nil(inst_hi.eval, "#{key}@#{want[1]}（HELP 声称的上限）应响应")
+
+      inst_lo = KLASS1.new("#{key}@#{want[0] - 1}")
+      assert_nil(inst_lo.eval, "#{key}@#{want[0] - 1}（HELP 声称的下限 −1）不应响应")
+
+      inst_hi2 = KLASS1.new("#{key}@#{want[1] + 1}")
+      assert_nil(inst_hi2.eval, "#{key}@#{want[1] + 1}（HELP 声称的上限 +1）不应响应")
+    end
+
+    # 「同字符两语义」的边界说明必须在场（T1.8 范围二要求写进 HELP）
+    ["定値表示", "補正値"].each do |frag|
+      assert_include(section + ex_help[ex_help.index("※ **同じ `@` でも意味が違います**") || 0..].to_s,
+                     frag, "HELP 缺少「@n 定値表示 vs 補正値」的边界说明")
+    end
+
+    # 1版↔2版 `WS` 同键不同义的说明必须在场
+    # （docs/t1.2-naming-proposal.md §4 留下的交接项，T1.8 前一直没人写）
+    ws_note = ex_help[/※ \*\*`WS` は本システム.*?(?=\n\s*※|\z)/m]
+    assert_not_nil(ws_note, "HELP_MESSAGE 缺少「1版 WS 与 2版 WS 同键不同义」的说明")
+    assert_include(ws_note, "2版", "WS 的作用域差异说明必须点明 2版 里 WS/WSE 是别的命令")
+  end
+
+  # ==========================================================================
+  # ⑧c **2版 HELP 的完备性**（T1.8 范围二；B8「漏列」教训的可执行版）
+  #
+  # 背景：docs/t1.2-manual-diff.md **B8** 记的天狗原罪——`tablehelp.js`
+  # 只列 14 张表，`NSRS発狂` 等真实可用的表没被列进去。
+  # 本项目的对应义务（该文档 §D 表明写）：「T1.8 整理 HELP_MESSAGE 时应以
+  # **实际已搬入的表 + 上游既有命令**为准写全，不重蹈天狗文档漏表的覆辙」。
+  #
+  # 为什么必须是断言而不是清单：HELP 是文案，写漏一个命令名不触发任何错误。
+  # 这里从**代码常量**（唯一真源）反推「应当出现的命令面」，逐个在 HELP 里找：
+  #   ① 2版 15 个新前缀（NSRS/SBX/WSX/KR*5/NJ*6/SEISEN）；
+  #   ② 父类 6 个前缀（UH/[KENHU]/SB/WS/WSE/NRS）—— 由「含父类全文」间接覆盖，
+  #      这里额外确认逐个在场，防止将来有人改成手抄而漏抄某个；
+  #   ③ T1.6 的三个新形态（倍率 / [J] / [L]）与倍率上界说明；
+  #   ④ 边界说明：同字符两语义、WS 跨系统同名不同义。
+  # 任一条缺失 → 当场红。
+  # ==========================================================================
+  def test_edition2_help_covers_actual_command_surface
+    ex_help = KLASS::HELP_MESSAGE
+    parent_help = BCDice::GameSystem::NinjaSlayer2::HELP_MESSAGE
+
+    # ① 父类全文逐字包含（常量覆写不拼接，漏掉 = /help 丢 K6/NRS 用法）
+    assert_not_equal(parent_help, ex_help, "2版 Ex 的 HELP_MESSAGE 未被覆写（本扩展命令必须有自己的说明）")
+    assert_include(ex_help, parent_help,
+                   "2版 Ex 的 HELP_MESSAGE 必须**逐字包含**父类全文——" \
+                   "常量覆写不拼接，漏掉会让 /help 丢失 K{x} 成功判定与父类追加判定")
+
+    # ② 2版 15 个新前缀逐个在场
+    added = KLASS.prefixes - KLASS.superclass.prefixes
+    assert_equal(15, added.size, "2版 新增前缀应为 15 个（T1.3~T1.5）")
+    added.each do |prefix|
+      assert_include(ex_help, prefix,
+                     "HELP_MESSAGE 未提到前缀 `#{prefix}`——玩家无从得知该命令存在" \
+                     "（B8 教训：文档漏表 = 命令事实上不存在）")
+    end
+
+    # ③ 父类 6 个前缀逐个在场（防将来改成手抄时漏抄）
+    KLASS.superclass.prefixes.each do |prefix|
+      # `[KENHU]` 是正则字符类、玩家不会直接打，但它在父类 HELP 原文里，
+      # 这里只断言 SB / WS / WSE / NRS / UH 这 5 个人类可打的形态。
+      next if prefix == "[KENHU]"
+
+      assert_include(ex_help, prefix, "父类前缀 `#{prefix}` 未出现在 HELP 中（父类 HELP 全文应覆盖）")
+    end
+
+    # ④ T1.6 新形态与倍率上界
+    ["倍率", "[J]", "[L]", "100"].each do |frag|
+      assert_include(ex_help, frag, "HELP_MESSAGE 缺少 T1.6 追加判定扩展的关键说明「#{frag}」")
+    end
+
+    # ⑤ 边界说明：同字符两语义 + WS 跨系统同名不同义
+    two_semantics = ex_help[/※ \*\*注意（同じ `@` でも意味が表により異なります）\*\*.*?(?=\n\s*---|\z)/m]
+    assert_not_nil(two_semantics, "HELP_MESSAGE 缺少「@n 定値表示 vs @±n 補正値」的同字符两语义说明")
+    ["定値表示", "補正値"].each do |frag|
+      assert_include(two_semantics, frag, "同字符两语义说明必须同时点明「#{frag}」")
+    end
+
+    ws_note = ex_help[/--- 1版拡張とのコマンド名の重複について.*/m]
+    assert_not_nil(ws_note, "HELP_MESSAGE 缺少「1版 WS 与 2版 WS 同键不同义」的小节")
+    assert_include(ws_note, "1版", "WS 作用域差异说明必须点明 1版 里 WS 是另一张表")
+
+    # ⑥ 收录范围逐表列出（T1.8 新增；范围值与 ledger 的 datarange 恒等）
+    karma_range = ex_help[/各表の収録範囲（補正を足した出目が範囲外になった場合のクランプ先）.*?(?=\n\s*例：|\z)/m]
+    assert_not_nil(karma_range, "HELP_MESSAGE 缺少カルマロンダリング 5 派閥的收录范围说明")
+    %w[KRS KRZ KRA KRO KRY].each do |school|
+      dr = entry(school)["datarange"]
+      want = "#{dr['min']}〜#{dr['max']}"
+      assert_include(karma_range, want,
+                     "#{school} 的 HELP 收录范围应与 ledger datarange 的「#{want}」一致")
+    end
+  end
+
+  # ==========================================================================
   # ⑨ **yml 正文逐字保真**（kimi T1.7 评审翻车点 1 —— 测试网的真实盲区）
   #
   # 为什么必须常驻化：toml 的 `output` 是从 **yml** 真实 eval 采集的，
