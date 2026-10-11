@@ -265,11 +265,13 @@ module TelegramBot
       dispatch ||= block || ->(_update) {}
 
       client = @api_client
-      client.listen do |update|
-        # client.listen 的 block 收到 handle_update 的返回值（本 gem 返回 message）；
-        # 我们要拿原始 update 来做迁移/反应等分支，故用闭包捕获。
+      client.listen do |event|
+        # ⚠️ gem 接缝实测：listen yield 的是 handle_update 的返回值 =
+        # update.current_message——**Message 而非 Update**（gem client.rb:41-47）。
+        # Router#extract_message 两种形态都收；callback_query 等非消息 update
+        # 会被 yield nil，Router 对 nil 安全（extract_message 直接返回 nil）。
         begin
-          dispatch.call(update)
+          dispatch.call(event)
         rescue StandardError => e
           # 兜底：记录后继续，绝不把异常抛出循环
           warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}")

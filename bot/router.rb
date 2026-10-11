@@ -549,13 +549,19 @@ module TelegramBot
 
     # 从 update 里取消息对象
     #
-    # 只认**原始消息类**（message / edited_message / channel_post /
-    # edited_channel_post / business_message / guest_message，经
-    # Update#current_message 统一取出）。其余 update 类型
-    # （callback_query / inline_query / my_chat_member / message_reaction …）
-    # 本层**不处理**——回调查询归 T3.x 的按钮 handler。
+    # **gem 2.8.1 接缝实测**（T2.6 真机验收踩坑留档）：`Client#listen` yield 的
+    # 是 **Message**——`handle_update` 返回 `update.current_message`
+    # （gem client.rb:41-47），不是 Update。只认 Update 形态会让全量消息在
+    # 此静默归零（症状：bot 在线、无任何回复、无报错日志）。
+    # 故本方法**两种形态都收**：Update 取其 current_message；Message 直接用。
     def extract_message(update)
       return nil if update.nil?
+
+      # Message 形态直通（respond_to? chat+text 且不响应 current_message）
+      if !update.respond_to?(:current_message) &&
+         update.respond_to?(:chat) && update.respond_to?(:text)
+        return update
+      end
 
       message =
         if update.respond_to?(:current_message) && !update.current_message.nil?
