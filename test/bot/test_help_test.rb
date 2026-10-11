@@ -15,7 +15,7 @@ class TestHelpHandler < Minitest::Test
   def test_help_text_covers_live_commands
     text = TelegramBot::Handlers::HelpHandler.new.call(nil)
 
-    %w[/roll /nd /system /settings /secret /bank /help].each do |cmd|
+    %w[/roll /nd /system /settings /secret /bank /ct /help].each do |cmd|
       assert_includes text, cmd, "帮助文本应覆盖 #{cmd}"
     end
     %w[deposit withdraw balance statement reset].each do |sub|
@@ -25,22 +25,23 @@ class TestHelpHandler < Minitest::Test
     assert_includes text, "[S]", "帮助应注明 S 判定不可混排的已知差异"
   end
 
-  # T3.3/T3.5 之前，/ct 与 /log 仍是占位。/bank 已由 T3.2 换成真 handler，
+  # T3.5 之前，/log 仍是占位。/bank（T3.2）与 /ct（T3.4）已换成真 handler，
   # **不得**再用 PendingHandler（占位文案会让用户以为功能没上）。
   def test_pending_handler_names_feature_and_no_false_promise
-    %w[自定义表\ /ct 跑团\ log].each do |feature|
-      out = TelegramBot::Handlers::PendingHandler.new(feature: feature).call(nil)
+    out = TelegramBot::Handlers::PendingHandler.new(feature: "跑团 log /log").call(nil)
 
-      assert_includes out, feature
-      assert_includes out, "后续版本"
-    end
+    assert_includes out, "跑团 log /log"
+    assert_includes out, "后续版本"
   end
 
-  def test_help_text_makes_no_pending_promise_for_bank
+  def test_help_text_makes_no_pending_promise_for_bank_or_ct
     text = TelegramBot::Handlers::HelpHandler.new.call(nil)
 
     refute_includes text, "天狗银行 /bank 将于后续版本提供",
                     "T3.2 后 /bank 已实装，帮助里不得再有占位承诺"
+    refute_includes text, "自定义表 /ct 将于后续版本提供",
+                    "T3.4 后 /ct 已实装，帮助里不得再有占位承诺"
     assert_includes text, "可透支", "透支是忠实保留的天狗行为，须在帮助里讲明"
+    assert_includes text, "/ct create", "T3.4：/ct 的入口应在帮助里可见"
   end
 end

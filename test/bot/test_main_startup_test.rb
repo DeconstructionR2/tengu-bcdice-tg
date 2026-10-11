@@ -53,6 +53,7 @@ class TestMainStartup < Minitest::Test
       require #{File.join(REPO, "bot/handlers/dice").inspect}
       require #{File.join(REPO, "bot/handlers/settings").inspect}
       require #{File.join(REPO, "bot/handlers/bank").inspect}
+      require #{File.join(REPO, "bot/handlers/custom_table").inspect}
       require #{File.join(REPO, "lib/engine_bootstrap").inspect}
 
       $SENT = []
@@ -353,6 +354,68 @@ class TestMainStartup < Minitest::Test
       )
       conn.close
       assert_empty rows, "结算后清零应真的删掉话题 88 那一行：#{rows.inspect}"
+    end
+  end
+
+  # T3.4 的接线闭环：**经 bot/main.rb 的真实接线**跑一遍自定义表全流程
+  # （菜单上架的 /ct 真有 handler 且真会落库；语义由 test_custom_table_* 负责）。
+  def test_startup_wires_custom_table_handler_end_to_end
+    Dir.mktmpdir("tengu-t3.4-main") do |dir|
+      db_path = File.join(dir, "tengu.db")
+      chat_id = -1_000_000_000_123_456_789
+
+      def update_src(n, text, chat_id, thread_id: nil)
+        <<~RUBY.strip
+          Telegram::Bot::Types::Update.new(update_id: #{n}, message: Telegram::Bot::Types::Message.new(
+            message_id: #{n}, date: 1_700_000_000,
+            chat: { id: #{chat_id}, type: "supergroup" },
+            from: { id: 1, is_bot: false, first_name: "T" }, text: "#{text}"#{thread_id ? ", message_thread_id: #{thread_id}" : ""}))
+        RUBY
+      end
+
+      updates = [
+        update_src(1, "/ct create 接线表", chat_id, thread_id: 88),
+        update_src(2, "/ct dice set 接线表 b 2d6", chat_id, thread_id: 88),
+        update_src(3, "/ct data set 接线表 7 七点", chat_id, thread_id: 88),
+        update_src(4, "/ct show 接线表", chat_id, thread_id: 88),
+        update_src(5, "/ct roll 接线表 b", chat_id, thread_id: 88),
+        update_src(6, "/ct list", chat_id)
+      ].join(",\n")
+
+      shim = File.join(dir, "shim_ct.rb")
+      File.write(shim, shim_source(db_path).sub("$UPDATES = []", "$UPDATES = [\n#{updates}\n]"))
+
+      sent_file = File.join(dir, "sent.json")
+      out = IO.popen(
+        { "BUNDLE_GEMFILE" => File.join(REPO, "Gemfile") },
+        ["bundle", "exec", "ruby", shim],
+        err: %i[child out],
+        chdir: REPO
+      ) { |io| io.read }
+
+      assert File.exist?(sent_file), "子进程应写出记录（实际输出：#{out[0, 600]}）"
+      sent = JSON.parse(File.read(sent_file)).fetch("sent")
+      texts = sent.map { |m| m["text"] }
+
+      assert_equal 6, texts.size, "/ct 六条都应有应答（菜单上架命令不许静默）：#{texts.inspect}"
+      assert_includes texts[0], "已在本群建表", "建表应答"
+      assert_includes texts[1], "2d6", "设骰型应答含新骰式"
+      assert_includes texts[2], "出目 7 结果已录入"
+      assert_includes texts[3], "快捷骰：a : 1d6 , b : 2d6", "show 明细"
+      assert_includes texts[4], "本群表「接线表」(b)：2d6 ＞ ",
+                      "roll 真引擎接线（随机结果不做断言，仅断言确定前缀）"
+      assert_includes texts[5], "接线表", "list 一览"
+      assert_equal 88, sent[1]["message_thread_id"], "thread 应逐条透传"
+      refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
+
+      # 落库：custom_tables 真被写进 DB_PATH 指向的库
+      require "sqlite3"
+      conn = SQLite3::Database.new(db_path)
+      rows = conn.execute(
+        "SELECT name, json_extract(spec, '$.dice.b') FROM custom_tables WHERE scope='private'"
+      )
+      conn.close
+      assert_equal [["接线表", "2d6"]], rows, "自定义表应落库（含改后的骰型）"
     end
   end
 end

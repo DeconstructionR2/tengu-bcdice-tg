@@ -3,7 +3,9 @@
 # ============================================================================
 # bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler / T2.5 挂 migration
 #              / T2.6 挂 /settings + 管理员助手 + 辅助轨开关持久化
-#              / T3.1 挂暗骰 /secret + 按钮回调路由）
+#              / T3.1 挂暗骰 /secret + 按钮回调路由
+#              / T3.2 挂天狗银行 /bank
+#              / T3.4 挂自定义表 /ct）
 #
 # 本文件保证 `bundle exec ruby bot/main.rb` 能起：
 #   1. 加载引擎（lib/engine_bootstrap.rb —— 与测试/spike 共用同一初始化序列）；
@@ -12,11 +14,11 @@
 #   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支）并挂 handler；
 #   5. 起长轮询。
 #
-# 已挂的 handler（T3.1 起）：
-#   /start /help /settings /roll /nd /system /secret + 辅助轨（裸 ASCII）
+# 已挂的 handler（T3.4 起）：
+#   /start /help /settings /roll /nd /system /secret /bank /ct + 辅助轨（裸 ASCII）
 #   + **:callback_query**（暗骰「公开」按钮）
-#   **尚无 handler**（按 router 静默策略不回复，等 T3.x 逐个填）：
-#   bank / ct / log（各自挂 PendingHandler 占位）
+#   **尚无真 handler**（temp 占位 PendingHandler：一句话应答，不静默）：
+#   log（T3.5 换成真 handler）
 #
 # T3.1 范围纪律（暗骰）：
 #   - Secrets 落库走 **写入时惰性 TTL 清理**（7 天），**不建定时任务**——
@@ -60,6 +62,7 @@ require_relative "handlers/settings"
 require_relative "handlers/help"
 require_relative "handlers/secret_dice"
 require_relative "handlers/bank"
+require_relative "handlers/custom_table"
 require_relative "migration"
 require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
@@ -113,18 +116,20 @@ bot_username =
 puts "[T3.1] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
 puts "[T3.1] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
 puts "[T3.1] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支"
-puts "[T3.2] 已挂 handler：/start /help /settings /roll /nd /system /secret(暗骰) /bank(天狗银行) + 辅助轨" \
-     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb + handlers/secret_dice.rb + handlers/bank.rb）；ct/log 占位应答待 T3.x"
+puts "[T3.4] 已挂 handler：/start /help /settings /roll /nd /system /secret(暗骰) /bank(天狗银行) /ct(自定义表) + 辅助轨" \
+     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb + handlers/secret_dice.rb + handlers/bank.rb + handlers/custom_table.rb）；log 占位应答待 T3.5"
 puts "[T3.2] 天狗银行：bank_record 按 (chat_id, thread_id) 话题级一本账；流水/道具为 JSON 数组（元素级删道具）" \
      "；余额可为负（忠实保留天狗无透支校验）；893 彩蛋照搬天狗 change893（金额串含 893 即小怪装饰）"
+puts "[T3.4] 自定义表：custom_tables 群级一表一行（话题共享）；改表权限=权限名单或本群管理员（getChatMember fail-closed）" \
+     "；查找顺序 内置(i18n 桥)→本群→公共；范围钳自动维护，掷表超钳取端点并明示"
 puts "[T3.1] 暗骰：结果落 secrets 表（TTL 7 天惰性清理），「公开」按钮 = callback 分支 + 本人校验 + 公开后删行"
 puts "[T2.6] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
 puts "[T2.6] 管理员助手已挂（bot/admin.rb，getChatMember；查询失败 fail-closed）"
 
-# 路由（T2.3 建，T2.4 挂真 handler）：
+# 路由（T2.3 建，T3.4 挂满 handler）：
 #   - slash 主轨：/start /help /settings /roll /nd /system /secret /bank /ct /log
 #     命令集合以 MainMenu::ENTRIES 为准；未注册 handler 的命令一律静默
-#     （故 /secret /bank /ct /log 目前静默，等 T3.x；/help 同样静默）。
+#     （现仅 /log 是占位应答——菜单上架命令不留静默，见 handlers/help.rb）。
 #   - 辅助轨：裸 ASCII 骰式（N4,3 / SB / 2d6>=4…），不命中一律静默（防抢话，§12 R4）。
 #   - aux_enabled 已持久化（T2.6）：读群级 chat_settings.aux_enabled，
 #     查不到行 = 默认开；查询失败由 router 的 fail-closed 兜底（异常→按关）。
@@ -170,19 +175,27 @@ settings_handler = TelegramBot::Handlers::SettingsHandler.new(
 bank_store = TenguDB::Bank.new(dice_db)
 bank_handler = TelegramBot::Handlers::BankHandler.new(bank: bank_store)
 
+# T3.4：自定义表 /ct。custom_tables 与上面共用同一 Connection；admin 用**同一
+# 个** Admin 实例（缓存跨消息复用，见 T2.6 纪律）；builtin 缺省 = BuiltinTables
+# 真桥（读引擎侧 i18n，懒构建——此刻 bootstrap 已完成）。
+custom_table_handler = TelegramBot::Handlers::CustomTableHandler.new(
+  custom_tables: TenguDB::CustomTables.new(dice_db),
+  admin: admin
+)
+
 router = TelegramBot::Router.new(
   api: api,
   handlers: { start: TelegramBot::StartHandler.new,
               # /help 与「菜单已上架、T3.x 才实现」的占位应答（真机验收教训：
               # 菜单里有的命令没 handler = 用户视角「bot 死了」；菜单外的
-              # 未知 slash 仍一律静默）。
+              # 未知 slash 仍一律静默）。/ct 已由 T3.4 换成真 handler。
               help: TelegramBot::Handlers::HelpHandler.new,
-              ct: TelegramBot::Handlers::PendingHandler.new(feature: "自定义表 /ct"),
               log: TelegramBot::Handlers::PendingHandler.new(feature: "跑团 log /log") }
                 .merge(TelegramBot::Handlers::DiceHandler.registry(dice))
                 .merge(TelegramBot::Handlers::SecretDiceHandler.registry(secret_dice))
                 .merge(TelegramBot::Handlers::SettingsHandler.registry(settings_handler))
-                .merge(TelegramBot::Handlers::BankHandler.registry(bank_handler)),
+                .merge(TelegramBot::Handlers::BankHandler.registry(bank_handler))
+                .merge(TelegramBot::Handlers::CustomTableHandler.registry(custom_table_handler)),
   bot_username: bot_username,
   # 辅助轨开关（T2.6：**已持久化**）。读群级 chat_settings.aux_enabled，
   # 查不到行 = 默认开（db/settings.rb 的 DEFAULT_AUX_ENABLED）。

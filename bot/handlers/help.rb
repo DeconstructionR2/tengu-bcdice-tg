@@ -6,10 +6,10 @@
 # 背景（2026-10-12 Phase 2 真机验收）：菜单里的 /help 没有 handler，按静默
 # 策略不回复——用户视角是「bot 死了」。菜单已上架的命令**必须**有应答：
 #   - /help        → 静态帮助文本（ASCII，§13 第 2 项纯 ASCII 定案）
-#   - /ct /log     → PendingHandler 一句话占位（T3.3/T3.5 提供）
+#   - /log         → PendingHandler 一句话占位（T3.5 提供）
 # 未在菜单里的未知 slash 仍按静默策略不回复（不变）。
-# /bank 已由 T3.2 换成真 handler，故不再在占位名单里（文案陈旧会让用户
-# 以为 /bank 不能用——与 T3.1 对 /secret 做过的同一处订正）。
+# /bank 已由 T3.2 换成真 handler、/ct 已由 T3.4 换成真 handler，故都不再在
+# 占位名单里（文案陈旧会让用户以为功能没上——与 T3.1 对 /secret 做过的同一处订正）。
 # ============================================================================
 
 module TelegramBot
@@ -27,6 +27,7 @@ module TelegramBot
         /bank deposit <金额> — 存钱（/bank withdraw 取钱，可透支）
         /bank item add|del <道具名> — 存取道具
         /bank balance — 查账；/bank statement — 出结算并清零；/bank reset — 清零
+        /ct — 自定义表：建表 /ct create、掷表 /ct roll <表名>（详解 /ct help）
         /help — 本帮助
 
         裸打也能掷骰（整条消息都是骰式才触发，闲聊不响应）：
