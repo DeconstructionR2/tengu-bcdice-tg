@@ -163,7 +163,23 @@ module BCDice
       # 初版「TRPGかちょう」实测落到 2版拡張 之后，注释与事实相反）。
       SORT_KEY = "にんしやすれいやあTRPG1かちょう"
 
-      HELP_MESSAGE = <<~TEXT
+      # ダイスボットの使い方
+      #
+      # ⚠ **必须含父类的 HELP_MESSAGE 全文**（不是只写扩展部分）：
+      #   HELP_MESSAGE 是**常量覆写**——Ex 类一旦自己定义，
+      #   父类那段（NJ / EV / AT / EL / SB の说明）就**整个消失**，
+      #   bot 侧 /help 只会显示扩展命令，1版玩家最常用的 NJ 判定反而没说明。
+      #   2版 NinjaSlayer2Ex 初版也踩过同一形态的坑（HELP 里只见天狗表、
+      #   看不见 K6/NRS 的用法），此处直接从 superclass 拼进来，
+      #   父类日后增补说明也会自动跟着走（不复制第二份 = 不会漂移）。
+      #
+      # 先取父类全文（常量在类体内已定义，直接引用即可）。
+      parent_help = NinjaSlayer::HELP_MESSAGE
+
+      # 注意父类 HELP 末行的「※上記コマンド群は『コア・ルールブック』に対応していません」
+      # 会一并保留——那是父类对 1版 的准确声明，本扩展不改变它的事实基础。
+      HELP_MESSAGE = begin
+        extension_help = <<~TEXT
         --- 天狗ダイス版 追加コマンド ---
         本システム（ニンジャスレイヤーTRPG 1版 拡張）は、天狗ダイス忍杀の独自表を
         移植しているため、親类的コマンドに加えて以下のコマンドが使用できます。
@@ -201,7 +217,11 @@ module BCDice
           天狗 1版この 9 表に可変値（+x）が無いため、補正も钳制も発生しません。
           出目が表の範囲外に出た場合はdice を振り直してください。
         ※ 親類的命令（NJ / EV / AT / EL / SB）は**一切変更していません**。
-      TEXT
+        ※ 上の親類ヘルプの例（NJ4 / EV5/3 / AT6[H] / EL6[H]）もそのまま使えます。
+        TEXT
+
+        parent_help + extension_help
+      end
 
       # T1.1①：先继承超类全部前缀（NJ/EV/AT/EL/SB）。
       # T1.7：再用 register_prefix 追加本扩展的 9 个表前缀。

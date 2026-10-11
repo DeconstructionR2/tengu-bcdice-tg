@@ -37,6 +37,7 @@ require "yaml"
 require "json"
 require "optparse"
 require "fileutils"
+require "rbconfig"
 require_relative "text_rewrite" # 声明式文本改写（拍板 B/C 映射的唯一副本）
 
 ROOT = File.expand_path("..", __dir__)
@@ -1410,13 +1411,26 @@ abort_with("--tables 未选中任何表") if want_karma.empty? && want_chara.emp
 #   （test_ext_game_system_commands.rb:86-90，不唯一即 exit 1）。故：
 #     - 只选 1版表         → NinjaSlayerEx.toml
 #     - 选到任何 2版表     → NinjaSlayer2Ex.toml（T1.4/T1.5/T1.6 块都在那）
-#     - 跨系统混选（罕见） → abort，要求分两次跑（--target-file 是逃生舱）
+#   - 只选 1版 表         → NinjaSlayerEx.toml
+#   - 选到任何 2版 表     → NinjaSlayer2Ex.toml（T1.4/T1.5/T1.6 块都在那）
+#   - **显式 --tables 且跨系统混选** → abort（见下）
+#
+# ⚠ **默认全量（不加 --tables）必须能一次跑完两批**：那正是本脚本的文档化主用法
+#   （T1.4 入库时确立的「一条命令重生成全部」），让它 abort 等于砸掉主用法。
+#   故默认全量时**依次写两个 toml**（见 §7 末段的二次调用），
+#   只在「用户手写了 --tables 且同时选了 1版 与 2版 表」时报错——
+#   那通常是想手工挑表，跨系统落同一个文件必然触发 runner 的
+#   「文件内 game_system 唯一」断言（test_ext_game_system_commands.rb:86-90）。
 only_ed1 = want_karma.empty? && want_chara.empty? && !want_ed1.empty?
-if !want_ed1.empty? && options[:target].nil? && (!want_karma.empty? || !want_chara.empty?)
+default_run = (options[:tables].sort == ALL_TABLES.sort)
+cross_system = !want_ed1.empty? && (!want_karma.empty? || !want_chara.empty?)
+
+if cross_system && !default_run && options[:target].nil?
   abort_with("--tables 跨游戏系统混选（1版 #{want_ed1.join(',')} + 2版 #{(want_karma + want_chara).join(',')}）。" \
              "\n  两批分属不同 toml（runner 要求单文件单 game_system），请分两次跑：" \
              "\n    --tables #{want_ed1.join(',')}" \
-             "\n    --tables #{(want_karma + want_chara).join(',')}")
+             "\n    --tables #{(want_karma + want_chara).join(',')}" \
+             "\n  （不加 --tables 的默认全量运行会自动依次写两个文件，无需分次）")
 end
 
 TARGET_FILE = options[:target] || (only_ed1 ? EDITION1_DEFAULT_TARGET : DEFAULT_TARGET)
@@ -1548,7 +1562,19 @@ end
 #   ④ JITSB / KRM 的天狗别名字典（10 / 13 个键）按**唯一骰型**收敛成
 #      `_A` / `_B` / `_C`；同骰的别名（KRM 的 `,D` 实为 1d6，与 `,A` 同骰）
 #      **不提供**后缀，避免凭空多出无差别的可选项。
-unless want_ed1.empty?
+# ⚠ 默认全量（不加 --tables）时 want_ed1 也非空，但**本进程写的是 2版 toml**，
+#   T1.7 用例属于另一个文件 → 必须跳过，交给末尾的自派生子进程单独写
+#   NinjaSlayerEx.toml。判据：目标文件是不是 1版 那份。
+write_ed1 = !want_ed1.empty? && File.expand_path(TARGET_FILE) == EDITION1_DEFAULT_TARGET
+unless write_ed1
+  if !want_ed1.empty?
+    puts "[gen_table_toml] 目标 toml 非 1版 那份，本进程跳过 T1.7 块" \
+         "（默认全量时由末尾的自派生子进程写入 NinjaSlayerEx.toml）"
+  end
+  t17_total = 0
+end
+
+if write_ed1
   ed1_body, ed1_count = generate_edition1_block
   err17_body, err17_count = generate_edition1_error_block
   t17_total = ed1_count + err17_count
@@ -1604,6 +1630,23 @@ parts = []
 parts << "T1.4 #{count14} 条" if want_karma.any?
 parts << "T1.5 #{t15_total} 条" if want_chara.any?
 parts << "T1.6 #{t16_count} 条" if t16_count.positive?
-parts << "T1.7 #{t17_total} 条" if want_ed1.any?
+parts << "T1.7 #{t17_total} 条" if write_ed1
 puts "[gen_table_toml] ✓ 已写入 #{TARGET_FILE.sub("#{ROOT}/", '')}（#{parts.join(' + ')}）"
+
+# ⚠ **默认全量（不加 --tables）要写两个 toml**，第二个必须用「只选 1版 表」
+#   的方式再跑一次本脚本——因为 TARGET_FILE 是单一全局，
+#   在同一进程里切换它会让上面所有块的 `updated` 基准（existing）失配。
+#   自派生（re-exec）是这里最安全的形态：新进程重新读盘、重新交叉校验、
+#   只动 NinjaSlayerEx.toml 的 T1.7 哨兵块（NinjaSlayer2Ex.toml 本次未被动过）。
+#
+# 用 Process 同步等待而非 system()，这样退出码能如实传出去；
+# 不加 --check 分支（--check 不写盘，两次跑无意义）。
+if default_run && !options[:check_only] && !write_ed1
+  ed1_tables = EDITION1_TABLES.join(",")
+  ok = system(RbConfig.ruby, __FILE__, "--tables", ed1_tables, "--target-file", EDITION1_DEFAULT_TARGET,
+              out: $stdout, err: $stderr)
+  unless ok
+    abort_with("1版 批次（--tables #{ed1_tables}）生成失败（子进程退出码非 0）")
+  end
+end
 

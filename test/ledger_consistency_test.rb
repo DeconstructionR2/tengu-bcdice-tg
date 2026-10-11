@@ -365,6 +365,36 @@ class TestLedgerConsistency < Test::Unit::TestCase
     end
   end
 
+  # ==========================================================================
+  # ⑧ HELP_MESSAGE：**常量覆写会吃掉父类全文**（T1.7 自审抓到的真实缺口）
+  #
+  # HELP_MESSAGE 是普通常量，子类一旦定义就**整个替换**父类的。
+  # 初版只写扩展段 → bot 侧 /help 里 1版玩家最常用的 NJ/EV/AT/EL/SB
+  # 说明全部消失。故本组断言两条：
+  #   ① 父类 HELP 全文逐字包含在 Ex HELP 里；
+  #   ② 9 个新表命令**都**在 HELP 里有条目。
+  # （注：直接读 superclass::HELP_MESSAGE 而不是照抄一份文字——
+  #   父类日后增补说明会自动跟着走，不会出现第二份漂移。）
+  # ==========================================================================
+  def test_edition1_help_message_keeps_parent_and_lists_all_tables
+    parent_help = BCDice::GameSystem::NinjaSlayer::HELP_MESSAGE
+    ex_help = KLASS1::HELP_MESSAGE
+
+    assert_not_equal(parent_help, ex_help, "Ex 的 HELP_MESSAGE 未被覆写（本批 9 表必须有自己的说明）")
+    assert_include(ex_help, parent_help,
+                   "Ex 的 HELP_MESSAGE 必须**逐字包含**父类全文——" \
+                   "常量覆写不拼接，漏掉会让 /help 丢失 NJ/EV/AT/EL/SB 的用法")
+
+    EDITION1_KEYS.each do |key|
+      assert_include(ex_help, key, "HELP_MESSAGE 未提到表 #{key}（玩家无从得知该命令存在）")
+    end
+
+    # 扩展段的语义要点必须在场（避免 HELP 只是一张命令清单而无边界说明）
+    ["定値表示", "補正値", "応答しません"].each do |frag|
+      assert_include(ex_help, frag, "HELP_MESSAGE 缺少关键语义说明「#{frag}」")
+    end
+  end
+
   # 天狗骰型字面量 → 归一化的 "<times>d<sides>[+<bonus>]"（与 gen_table_toml 同解）。
   def normalize_1_dice_expr(raw)
     s = raw.to_s.downcase.gsub("+x", "").strip
