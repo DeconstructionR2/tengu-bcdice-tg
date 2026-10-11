@@ -150,6 +150,10 @@ module TelegramBot
 
       return nil if old_id.nil? || new_id.nil?
 
+      # 0 守卫（kimi T2.5 评审）：Telegram 的 chat_id 永不为 0，但 Ruby 里 0 是
+      # 真值、垃圾字符串 to_i 也得 0——不拦的话会把行迁到 chat_id 0 黑洞里。
+      return nil if old_id.zero? || new_id.zero?
+
       # 同一 id（防御：Telegram 不会这么发，但自我 UPDATE 会「命中全部行」
       # 而让 moved? 误报为真变更，白白污染幂等判定的证据）
       return Result.new(old_chat_id: old_id, new_chat_id: new_id,
@@ -196,17 +200,24 @@ module TelegramBot
       recorded = false
       conflict = false
 
-      conn.transaction(:immediate) do
-        TABLES.each do |table|
-          conn.execute(
-            "UPDATE #{table} SET chat_id = ? WHERE chat_id = ?", [new_id, old_id]
-          )
-          # 受影响行数读 Connection#changes（execute 的返回值是结果集，
-          # 不是 change count——T2.4 D5 实测过这个坑）
-          moved[table] = conn.changes
-        end
+      begin
+        conn.transaction(:immediate) do
+          TABLES.each do |table|
+            conn.execute(
+              "UPDATE #{table} SET chat_id = ? WHERE chat_id = ?", [new_id, old_id]
+            )
+            # 受影响行数读 Connection#changes（execute 的返回值是结果集，
+            # 不是 change count——T2.4 D5 实测过这个坑）
+            moved[table] = conn.changes
+          end
 
-        recorded, conflict = record_alias(old_id, new_id)
+          recorded, conflict = record_alias(old_id, new_id)
+        end
+      rescue SQLite3::ConstraintException => e
+        # 冲突可观测性（kimi T2.5 评审）：异常抛给 router 后日志只剩类名，
+        # 排查「哪张表哪个键撞了」零线索。此处先做结构化诊断再原样重抛。
+        warn_conflict_keys(old_id, new_id, e)
+        raise
       end
 
       warn_conflict(old_id, new_id) if conflict
@@ -244,6 +255,43 @@ module TelegramBot
       )
     rescue StandardError
       nil # logger 坏了也不能让迁移失败
+    end
+
+    # UNIQUE 冲突诊断（kimi T2.5 评审）：冲突发生时逐表查出**具体撞键**，
+    # 否则异常到 router 只剩一个类名，「永远迁不动」的死锁根本无法排查。
+    #
+    # re-key 的 UPDATE 只可能撞这三类约束：
+    #   chat_settings / bank_record：PK (chat_id, thread_id)
+    #   custom_tables：UNIQUE (scope, chat_id, name)
+    # （secrets/session_logs 的 PK 与 chat_id 无关，结构上撞不了）
+    # 只记结构性键（thread_id / scope+name），不记任何业务内容。
+    CONFLICT_PROBES = {
+      "chat_settings" =>
+        "SELECT a.thread_id AS k FROM chat_settings a WHERE a.chat_id = ? AND EXISTS " \
+        "(SELECT 1 FROM chat_settings b WHERE b.chat_id = ? AND b.thread_id = a.thread_id)",
+      "bank_record" =>
+        "SELECT a.thread_id AS k FROM bank_record a WHERE a.chat_id = ? AND EXISTS " \
+        "(SELECT 1 FROM bank_record b WHERE b.chat_id = ? AND b.thread_id = a.thread_id)",
+      "custom_tables" =>
+        "SELECT a.scope || ':' || a.name AS k FROM custom_tables a WHERE a.chat_id = ? AND EXISTS " \
+        "(SELECT 1 FROM custom_tables b WHERE b.chat_id = ? AND b.scope = a.scope AND b.name = a.name)",
+    }.freeze
+
+    def warn_conflict_keys(old_id, new_id, err)
+      parts = CONFLICT_PROBES.filter_map do |table, sql|
+        keys = conn.execute(sql, [old_id, new_id]).map { |row| row.is_a?(Hash) ? row["k"] : row[0] }
+        next if keys.empty?
+
+        "#{table} 冲突键=#{keys.first(5).inspect}#{keys.size > 5 ? "（共#{keys.size}个）" : ''}"
+      end
+
+      @logger.warn(
+        "[migration] re-key 冲突（#{old_id} → #{new_id}）：#{err.class}；" \
+        "#{parts.empty? ? '未定位到具体撞键表' : parts.join('；')}。" \
+        "数据仍在旧 id 下（事务已回滚），排查后可手工重迁"
+      )
+    rescue StandardError
+      nil # 诊断自身失败不得掩盖原始异常（调用方会重抛原异常）
     end
 
     # nil / 空串 → nil；其余一律 to_i（**统一 64 位口径**，§0.2.4：

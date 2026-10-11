@@ -372,6 +372,12 @@ class TestMigration < Minitest::Test
       @migration.handle(chat_id: OLD_CHAT_ID, migrate_to: NEW_CHAT_ID)
     end
 
+    # 冲突诊断日志（kimi T2.5 评审）：必须能定位到**哪张表哪个键**，
+    # 否则异常到 router 只剩类名，死锁无法排查
+    log = @io.string
+    assert_match(/chat_settings/, log, "冲突诊断应指出冲突表")
+    assert_match(/冲突键/, log, "冲突诊断应列出具体撞键")
+
     # 整笔回滚：连先执行的 bank_record 也不能留在新 id 下
     assert_equal 2, count("chat_settings", OLD_CHAT_ID), "冲突时旧 id 下应保持原样"
     assert_equal 0, count("bank_record", NEW_CHAT_ID), "事务回滚：先执行的表也不能改"
@@ -580,5 +586,27 @@ class TestMigration < Minitest::Test
       "log_entries" => @conn.execute_query("SELECT * FROM log_entries ORDER BY rowid"),
       "chat_id_aliases" => @conn.execute_query("SELECT * FROM chat_id_aliases ORDER BY rowid")
     )
+  end
+
+  # --- 反射守卫（kimi T2.5 评审）---------------------------------------------
+  # 「新增含 chat_id 的表但忘了进 Migration::TABLES」= 群升级后该表数据静默消失，
+  # 纯靠 review 纪律兜不住。把纪律升级成测试强制：扫 sqlite_master 全表，
+  # 凡含 chat_id 列的必须在 TABLES 里（chat_id_aliases 是审计表自身，豁免）。
+  def test_every_chat_id_bearing_table_is_covered_by_migration_tables
+    table_names = @conn.get_first_value(
+      "SELECT group_concat(name) FROM sqlite_master WHERE type = 'table'", []
+    ).to_s.split(",").reject(&:empty?)
+
+    bearing = table_names.select do |t|
+      @conn.get_first_value("SELECT group_concat(name) FROM pragma_table_info(?)", [t])
+           .to_s.split(",").include?("chat_id")
+    end
+
+    assert_includes bearing, "chat_settings", "守卫 sanity：schema 应真有含 chat_id 的表"
+
+    covered = TelegramBot::Migration::TABLES + %w[chat_id_aliases]
+    missing = bearing - covered
+    assert_empty missing,
+                 "含 chat_id 的表未进 Migration::TABLES（群升级将静默丢该表数据）：#{missing.inspect}"
   end
 end
