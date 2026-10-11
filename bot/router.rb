@@ -35,7 +35,8 @@
 #   - **纯 ASCII**：含非 ASCII 直接不命中（§13 第 2 项；日文一律不响应）。
 #   - **@后缀只认本 bot**：别的 bot 的 `/cmd@OtherBot` 静默。
 #   - **chat_id 按 64 位整型处理**；私聊/群/超级群同一路径（行为差异归 handler）。
-#   - **迁移消息与非文本消息安静跳过**（迁移处理归 T2.5，留钩子注释）。
+#   - **迁移消息走注入的 migration handler**（T2.5：bot/migration.rb 做事务性
+#     re-key；本层零 DB 依赖，只负责**不把它当普通消息处理** + 异常兜底）。
 #   - **router 不写 DB、不联网**：发送只经注入的 TelegramApi，测试全 mock。
 #   - **错误兜底**：handler 抛异常 → warn（只记结构性信息，不含用户正文）后继续。
 # ============================================================================
@@ -250,7 +251,7 @@ module TelegramBot
       MainMenu::ENTRIES.map { |e| e[:command].to_s }
     end
 
-    attr_reader :api, :aux_enabled, :handlers, :aux_pattern
+    attr_reader :api, :aux_enabled, :handlers, :aux_pattern, :migration
     attr_accessor :bot_username
 
     # @param api [TelegramBot::TelegramApi] 发送通道（注入；router 自己不联网）
@@ -262,12 +263,16 @@ module TelegramBot
     #   nil = 不校验 @后缀（单 bot 部署常见情形）。
     # @param aux_systems [Array<Class>, nil] 辅助轨判定用的规则类；
     #   nil = 按 AuxMatcher::DEFAULT_SYSTEM_IDS 现取（需引擎已 bootstrap）。
+    # @param migration [#call, nil] 群升级 re-key 处理器（T2.5）。签名
+    #   `call(chat_id:, migrate_to:, migrate_from:)`，返回 nil 或 Result。
+    #   nil = 未注入 → 迁移消息安静跳过（并 warn 一次/条），不崩。
     # @param logger [#warn] 日志器（只记结构性信息）
     def initialize(api:,
                    handlers: {},
                    aux_enabled: nil,
                    bot_username: nil,
                    aux_systems: nil,
+                   migration: nil,
                    logger: $stderr)
       @api = api
       @handlers = handlers.dup
@@ -275,6 +280,7 @@ module TelegramBot
       @bot_username = bot_username
       @logger = logger
       @aux_systems = aux_systems
+      @migration = migration
       @aux_pattern = AuxMatcher.build_pattern(aux_systems || self.class.default_systems)
     end
 
@@ -328,13 +334,15 @@ module TelegramBot
       message = extract_message(update)
       return nil if message.nil?
 
-      # --- 群升级迁移消息：安静跳过 ---
+      # --- 群升级迁移消息：交给 migration handler（T2.5）---
       # migrate_to_chat_id / migrate_from_chat_id 是群「普通群 ↔ 超级群」升级的
-      # 服务消息（§0.2.4）。真正的事务性 re-key 归 T2.5 migration.rb，本层
-      # 只保证**不把它当普通消息处理**。
-      # ↓↓↓ T2.5 钩子：在此处按 migrate_from_chat_id → migrate_to_chat_id
-      #     调 Migration.handle(chat_id:, migrate_to:)（幂等，§12 R5）。
-      return nil if migration_message?(message)
+      # 服务消息（§0.2.4）。两侧各发一条（旧群侧带 migrate_to、新群侧带
+      # migrate_from），handler 对两个方向做的事完全相同，故幂等（§12 R5）。
+      #
+      # 本层**不持有 DB**：handler 由 main.rb 注入、测试注入假身。未注入时
+      # 保持 T2.3 的行为（安静跳过）——缺依赖不该让 bot 崩，但也别静默丢
+      # 迁移（故打 warn，运维能看见）。
+      return handle_migration(message) if migration_message?(message)
 
       chat = message.chat
       return nil if chat.nil? || chat.id.nil?
@@ -352,6 +360,39 @@ module TelegramBot
 
       # --- 辅助轨裸 ASCII 骰式 ---
       handle_aux(text, chat_id: chat_id, thread_id: thread_id, message: message)
+    end
+
+    # ------------------------------------------------------------------
+    # 群升级迁移（T2.5）
+    # ------------------------------------------------------------------
+
+    # 把迁移消息交给注入的 handler。**不回复任何消息**——升级服务消息对
+    # 群里其他 bot 与用户都不该有回声。
+    #
+    # 三条硬纪律：
+    #   - 迁移消息**绝不走普通消息路径**（不进 slash/aux 判定）：服务消息的
+    #     text 是系统生成的「群已升级为超级群」，不掷骰、不回话。
+    #   - handler 抛异常 → warn（只记 class + id，不含正文）后继续，**不杀循环**
+    #     （与 run_handler 同一纪律；DB 故障不该让 bot 停止掷骰）。
+    #   - 未注入 handler → 安静跳过 + warn（缺依赖可见，不静默丢迁移）。
+    #
+    # @return [Object, nil] handler 的返回值
+    def handle_migration(message)
+      return nil if @migration.nil?
+
+      chat_id = message.respond_to?(:chat) ? message.chat&.id : nil
+      migrate_to = message.migrate_to_chat_id if message.respond_to?(:migrate_to_chat_id)
+      migrate_from = message.migrate_from_chat_id if message.respond_to?(:migrate_from_chat_id)
+
+      @migration.call(chat_id: chat_id, migrate_to: migrate_to, migrate_from: migrate_from)
+    rescue StandardError => e
+      warn_line("[router] 群迁移 re-key 失败（chat_id=#{chat_id}）：#{e.class}")
+      nil
+    ensure
+      # 缺依赖也要留痕：静默丢弃迁移 = 群升级后账本无声消失，
+      # 而这类故障没有任何用户可见症状（迁移消息本就不该回话）。
+      warn_line("[router] 未注入 migration handler，群升级 re-key 被跳过" \
+                "（构造 Router 时应传 migration:）") if @migration.nil?
     end
 
     # ------------------------------------------------------------------

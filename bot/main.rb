@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # ============================================================================
-# bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler）
+# bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler / T2.5 挂 migration）
 #
 # 本文件保证 `bundle exec ruby bot/main.rb` 能起：
 #   1. 加载引擎（lib/engine_bootstrap.rb —— 与测试/spike 共用同一初始化序列）；
@@ -18,6 +18,10 @@
 #     （要扩 chat_settings 加列 → 属 schema 变更，不在本任务范围）。
 #     router 侧的接口（->(chat_id, thread_id) { bool }）已就位，届时改这一行。
 #
+# T2.5 范围纪律（群升级 re-key）：
+#   - Migration 由本文件构造并**注入** Router，router 自己 require 不它、不碰 DB；
+#   - 与 DiceHandler **共用同一 Connection 实例**（单连接纪律，§3 决9）。
+#
 # 跑法：
 #   bundle exec ruby bot/main.rb                # 正式 token（.env 的 TELEGRAM_BOT_TOKEN）
 #   TENGU_ENV=test bundle exec ruby bot/main.rb # 测试 token（.env 的 TELEGRAM_BOT_TOKEN_TEST）
@@ -31,6 +35,8 @@ require_relative "config"
 require_relative "telegram_api"
 require_relative "router"
 require_relative "handlers/dice"
+require_relative "migration"
+require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
 
 # --- 启动 -------------------------------------------------------------------
@@ -79,11 +85,12 @@ bot_username =
     nil
   end
 
-puts "[T2.4] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
-puts "[T2.4] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
-puts "[T2.4] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨默认开）"
-puts "[T2.4] 已挂 handler：/start /roll /nd /system + 辅助轨（bot/handlers/dice.rb）；" \
+puts "[T2.5] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
+puts "[T2.5] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
+puts "[T2.5] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨默认开）"
+puts "[T2.5] 已挂 handler：/start /roll /nd /system + 辅助轨（bot/handlers/dice.rb）；" \
      "其余命令静默等 T3.x"
+puts "[T2.5] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
 
 # 路由（T2.3 建，T2.4 挂真 handler）：
 #   - slash 主轨：/start /help /settings /roll /nd /system /secret /bank /ct /log
@@ -92,27 +99,36 @@ puts "[T2.4] 已挂 handler：/start /roll /nd /system + 辅助轨（bot/handler
 #   - 辅助轨：裸 ASCII 骰式（N4,3 / SB / 2d6>=4…），不命中一律静默（防抢话，§12 R4）。
 #   - aux_enabled 默认开；每群可关的**持久化**（读 chat_settings）归后续 /settings
 #     任务（需扩 chat_settings 加列），本任务只保留可注入的开关查询接口。
-dice = TelegramBot::Handlers::DiceHandler.new
-
 # 启动期强制打开 DB（建表 + schema）。
 #
 # 为什么不等第一次掷骰再惰性开：DB_PATH 写错 / 数据卷没挂这类**部署期**故障，
 # 越早炸越好——真到了群消息里才炸，玩家看到的是「bot 装上了但一直不掷骰」，
 # 排查成本高一个数量级。这与上面「菜单注册失败就 exit 1」是同一条纪律。
+#
+# 连接**只开一次**并同时交给 DiceHandler 与 Migration（T2.5）：单连接纪律
+# （§3 决9）——两个 Connection 指向同一文件会各自持有 sqlite3 句柄，WAL 下
+# 不会坏数据，但写锁竞争与可见性不确定性都是白捡的。
+dice_db = nil
 begin
-  dice.settings
+  dice_db = TenguDB::Connection.instance
 rescue StandardError => e
-  warn("[T2.4] 打开数据库失败（路径=#{TelegramBot::Config.db_path}）：#{e.class}（异常消息不打印）")
-  warn("[T2.4] 请核对 DB_PATH 与数据卷权限（容器内应为 /app/data/tengu.db，且该目录可写）。")
+  warn("[T2.5] 打开数据库失败（路径=#{TelegramBot::Config.db_path}）：#{e.class}（异常消息不打印）")
+  warn("[T2.5] 请核对 DB_PATH 与数据卷权限（容器内应为 /app/data/tengu.db，且该目录可写）。")
   exit(1)
 end
+
+dice = TelegramBot::Handlers::DiceHandler.new(settings: TenguDB::Settings.new(dice_db))
 
 router = TelegramBot::Router.new(
   api: api,
   handlers: { start: TelegramBot::StartHandler.new }
                 .merge(TelegramBot::Handlers::DiceHandler.registry(dice)),
   bot_username: bot_username,
-  aux_enabled: ->(_chat_id, _thread_id) { true }
+  aux_enabled: ->(_chat_id, _thread_id) { true },
+  # T2.5：群升级 re-key。**与 dice 共用同一连接**（单连接纪律，§3 决9）——
+  # 两个 Connection 指向同一个文件会各自持有 sqlite3 句柄，WAL 下虽然
+  # 不会坏数据，但写锁竞争与「谁先看到对方提交」的不确定性都是白捡的。
+  migration: TelegramBot::Migration.new(connection: dice_db)
 )
 
 # 长轮询（零入境端口，计划 §3 决7）。单条消息异常由 api.start 内部兜底，

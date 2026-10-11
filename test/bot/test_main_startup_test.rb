@@ -117,8 +117,9 @@ class TestMainStartup < Minitest::Test
       out, payload = run_startup(db_path)
 
       assert File.exist?(db_path), "启动应按 DB_PATH 建库文件（实际输出：#{out[0, 400]}）"
-      assert_includes out, "[T2.4]", "启动日志前缀应更新为 T2.4"
+      assert_includes out, "[T2.5]", "启动日志前缀应更新为 T2.5"
       assert_includes out, "handlers/dice.rb", "启动日志应列出已挂的 handler"
+      assert_includes out, "migration.rb", "启动日志应确认群升级 re-key 已挂（T2.5）"
       refute_includes out, "FakeTokenForUnitTests",
                       "启动日志绝不能回显 token 值（token 纪律）"
 
