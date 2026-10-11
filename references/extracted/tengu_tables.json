@@ -2095,7 +2095,7 @@
         "success_message_chars": 54,
         "regexp_accepts": {
           "wasshoi9": true,
-          "wasshoi_9": true,
+          "wasshoi_9": false,
           "wasshoi!9": true,
           "wasshoi！9": true,
           "wasshoi": false,
@@ -2114,7 +2114,7 @@
         "success_message_chars": 60,
         "regexp_accepts": {
           "wasshoi9": true,
-          "wasshoi_9": true,
+          "wasshoi_9": false,
           "wasshoi!9": true,
           "wasshoi！9": true,
           "wasshoi": false,

@@ -37,6 +37,7 @@ require "yaml"
 require "json"
 require "optparse"
 require "fileutils"
+require_relative "text_rewrite" # 声明式文本改写（拍板 B/C 映射的唯一副本）
 
 ROOT = File.expand_path("..", __dir__)
 LEDGER_PATH = File.join(ROOT, "references/extracted/i18n_key_ledger.yml")
@@ -366,13 +367,15 @@ def cross_validate!
     errors << "SEISEN: sides 不一致 json=#{seisen_expr[2]} code=#{CODE_SEISEN_SIDES}" if seisen_expr[2].to_i != CODE_SEISEN_SIDES
   end
 
-  # ② 判定式：JSON 的 comparison 必须就是 "sum <= dkk"
-  errors << "SEISEN: JSON comparison 非 <= 语义：#{SEISEN_JSON['comparison']}" unless SEISEN_JSON["comparison"].include?("<=")
+  # ② 判定式：JSON 的 comparison 必须就是 "dice.sum <= Number(dkk)"（kimi P5：精确等值，
+  # 不用 include? 模糊匹配——防止语义漂移在子串层面漏检）
+  errors << "SEISEN: JSON comparison 漂移：#{SEISEN_JSON['comparison'].inspect}" unless SEISEN_JSON["comparison"] == "dice.sum <= Number(dkk)"
   errors << "SEISEN: 代码 SEISEN_CMP 应为 :<=，实为 #{KLASS::SEISEN_CMP.inspect}" unless KLASS::SEISEN_CMP == :<=
 
-  # ③ 文案：yml 的 judge 段 ↔ JSON 的 wasshoi（逐字）
+  # ③ 文案：yml 的 judge 段 ↔ JSON 的 wasshoi（经声明式 TEXT_REWRITE 改写后逐字一致）
   %w[judge_name success_word success_message failure_word].each do |k|
     want = k == "judge_name" || k == "success_message" ? SEISEN_JSON.dig("kinds", "SEISEN", k) : SEISEN_JSON[k]
+    want = rewrite_text(want) if want.is_a?(String)
     got = I18n.t("NinjaSlayer2Ex.judge.SEISEN.#{k}", locale: :ja_jp, raise: true)
     errors << "SEISEN 文案 #{k} 不一致 json=#{want.inspect} yml=#{got.inspect}" if want != got
   end
@@ -756,6 +759,15 @@ def splice_block(existing, block, begin_mark = BEGIN_MARK, end_mark = END_MARK)
   e = existing.index(end_mark)
   if b && e
     abort_with("哨兵块嵌套/顺序异常（END 在 BEGIN 之前）") if e < b
+
+    # kimi P2：批内子集替换会造成用例静默减少（如 --tables KRS,KRO 把 108→36）。
+    # 替换前比对用例数，下降即 abort（要整批替换就去掉 --tables，或显式 --allow-shrink）。
+    old_count = existing[b..e].scan(/\[\[\s*test\s*\]\]/).length
+    new_count = block.scan(/\[\[\s*test\s*\]\]/).length
+    if new_count < old_count
+      abort_with("哨兵块替换会使用例数从 #{old_count} 降到 #{new_count}（--tables 批内子集导致）。\n" \
+                 "  整批重生成请去掉 --tables；确认要缩容请人工编辑。")
+    end
 
     head = existing[0...b]
     tail = existing[(e + end_mark.length)..] || ""

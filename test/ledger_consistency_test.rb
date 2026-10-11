@@ -18,6 +18,7 @@ require "json"
 require "bcdice"
 require "bcdice/game_system"
 require "bcdice/translate"
+require_relative "../scripts/text_rewrite"
 
 I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
 I18n.load_path.concat(Dir[File.expand_path("../i18n/**/*.yml", __dir__)] - I18n.load_path)
@@ -195,14 +196,14 @@ class TestLedgerConsistency < Test::Unit::TestCase
     assert_equal(:<=, KLASS::SEISEN_CMP, "代码 SEISEN_CMP 应为 :<=")
 
     # ③ 文案逐字：yml judge 段 ↔ JSON wasshoi
-    #
-    # ⚠ I18n.t 取子树时返回的是**符号键** Hash（实测），故用 :judge_name 之类。
+    #   （JSON 侧须先经声明式 TEXT_REWRITE 改写——yml 存的是改写后形态，
+    #   拍板 C 删除了 :japanese_goblin: 表情码）
     yml_judge = I18n.t("NinjaSlayer2Ex.judge.SEISEN", locale: :ja_jp, raise: true)
-    assert_equal(wasshoi.dig("kinds", "SEISEN", "judge_name"), yml_judge[:judge_name],
+    assert_equal(rewrite_text(wasshoi.dig("kinds", "SEISEN", "judge_name")), yml_judge[:judge_name],
                  "SEISEN judge_name 与 JSON 不一致")
     assert_equal(wasshoi.fetch("success_word"), yml_judge[:success_word],
                  "SEISEN success_word 与 JSON 不一致")
-    assert_equal(wasshoi.dig("kinds", "SEISEN", "success_message"), yml_judge[:success_message],
+    assert_equal(rewrite_text(wasshoi.dig("kinds", "SEISEN", "success_message")), yml_judge[:success_message],
                  "SEISEN success_message 与 JSON 不一致")
     assert_equal(wasshoi.fetch("failure_word"), yml_judge[:failure_word],
                  "SEISEN failure_word 与 JSON 不一致")

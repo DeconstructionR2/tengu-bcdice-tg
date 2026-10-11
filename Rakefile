@@ -27,6 +27,7 @@ Rake::TestTask.new(:default) do |t|
     "test/i18n_guard_test.rb",
     "test/karmarond_semantics_test.rb",
     "test/ledger_consistency_test.rb",
+    "test/engine_structure_test.rb",
   ]
   t.warning = false
   t.verbose = false

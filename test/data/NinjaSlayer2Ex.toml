@@ -2249,7 +2249,7 @@ rands = [
 [[ test ]]
 game_system = "NinjaSlayer2Ex"
 input = "SEISEN9"
-output = "聖戦判定! = (2+4) = 6<=9  判定成功！\n\n:japanese_goblin: **「……神々の使者、ヤクザ天狗参上！」** :japanese_goblin:"
+output = "聖戦判定! = (2+4) = 6<=9  判定成功！\n\n**「……神々の使者、ヤクザ天狗参上！」**"
 success = true
 failure = false
 rands = [
@@ -2261,7 +2261,7 @@ rands = [
 [[ test ]]
 game_system = "NinjaSlayer2Ex"
 input = "SEISEN9"
-output = "聖戦判定! = (3+6) = 9<=9  判定成功！\n\n:japanese_goblin: **「……神々の使者、ヤクザ天狗参上！」** :japanese_goblin:"
+output = "聖戦判定! = (3+6) = 9<=9  判定成功！\n\n**「……神々の使者、ヤクザ天狗参上！」**"
 success = true
 failure = false
 rands = [
@@ -2309,7 +2309,7 @@ rands = [
 [[ test ]]
 game_system = "NinjaSlayer2Ex"
 input = "SEISEN99"
-output = "聖戦判定! = (6+6) = 12<=99  判定成功！\n\n:japanese_goblin: **「……神々の使者、ヤクザ天狗参上！」** :japanese_goblin:"
+output = "聖戦判定! = (6+6) = 12<=99  判定成功！\n\n**「……神々の使者、ヤクザ天狗参上！」**"
 success = true
 failure = false
 rands = [
@@ -2321,7 +2321,7 @@ rands = [
 [[ test ]]
 game_system = "NinjaSlayer2Ex"
 input = "SEISEN12"
-output = "聖戦判定! = (6+6) = 12<=12  判定成功！\n\n:japanese_goblin: **「……神々の使者、ヤクザ天狗参上！」** :japanese_goblin:"
+output = "聖戦判定! = (6+6) = 12<=12  判定成功！\n\n**「……神々の使者、ヤクザ天狗参上！」**"
 success = true
 failure = false
 rands = [
@@ -2605,3 +2605,57 @@ rands = [
 
 
 # <<< END GENERATED: T1.5 CHARAMAKE
+
+# ---------------------------------------------------------------------------
+# 暗骰（secret）正向用例（kimi T1.5 评审 P1：SSEISEN9 能力入网，防上游升级静默破坏覆写）
+# output 由真实 eval 机械采集（2026-10-11）；表情码删除（拍板C）已反映。
+# ---------------------------------------------------------------------------
+
+# SSEISEN9（暗骰·判定成功）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "SSEISEN9"
+output = "聖戦判定! = (6+2) = 8<=9  判定成功！\n\n**「……神々の使者、ヤクザ天狗参上！」**"
+secret = true
+success = true
+failure = false
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 2 },
+]
+
+# SSEISEN9（暗骰·判定失敗）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "SSEISEN9"
+output = "聖戦判定! = (6+6) = 12<=9  判定失敗"
+secret = true
+success = false
+failure = true
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 6 },
+]
+
+# SSBX（暗骰·天狗呈现版サツバツ）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "SSBX"
+output = "サツバツ(1D6) ＞ (4) ＞ **脚部破壊**：『痛打+1』、カラテダメージ1、脚力ダメージ2\n\n**「どこへ逃げても無駄だ！」敵の脚を無慈悲に粉砕！**\n『痛打+1』。\n敵の【体力】を減らした場合、付属効果として『カラテダメージ1』と『脚力ダメージ2』と『●部位損傷：脚部』を与える。\n"
+secret = true
+success = false
+failure = false
+rands = [
+  { sides = 6, value = 4 },
+]
+
+# SNJI@3（暗骰·定値表示）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "SNJI@3"
+output = "初期ジツ系統(3) ＞ **カラテミサイル**：遠隔攻撃系\n**使用タイミング**：手番「攻撃フェイズ」\n**コスト**：精神力1、1行動\n**ターゲット**：最大で【ジツ】値+1体までの敵**（上限4）**\n**発動難易度**：ニューロン＋ジツ：NORMAL\n**効果種別**：射撃、マルチターゲット\n\nカラテミサイルのLV数+1個のカラテ光球弾が発射され、使用者から視線が通ってさえいれば、どれだけ離れていても自動的に命中する。\nダメージはそれぞれ1である（『回避：NORMAL』）。\n複数の敵に振り分けても、1つの敵に集中してもよい（まとめて回避可能）。\nカラテミサイルは射撃系効果のため、ターゲットが自分と隣接している場合には使用できない。\nこのジツで射出できるカラテ光球弾の最大数は4個である。\n"
+secret = true
+success = false
+failure = false
+rands = [
+]

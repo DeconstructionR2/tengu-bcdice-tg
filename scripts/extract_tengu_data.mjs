@@ -235,7 +235,7 @@ async function extractWasshoi() {
       // 真函数验证：逐条喂输入给 kindRegExp，证明匹配语义
       regexp_accepts: {
         wasshoi9: /wasshoi[!！]?(\d+)$/i.test("wasshoi9"),
-        wasshoi_9: /wasshoi[!！]?(\d+)$/i.test("wasshoi9"),
+        wasshoi_9: /wasshoi[!！]?(\d+)$/i.test("wasshoi_9"),
         "wasshoi!9": /wasshoi[!！]?(\d+)$/i.test("wasshoi!9"),
         "wasshoi！9": /wasshoi[!！]?(\d+)$/i.test("wasshoi！9"),
         wasshoi: /wasshoi[!！]?(\d+)$/i.test("wasshoi"),

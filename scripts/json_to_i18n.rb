@@ -22,6 +22,7 @@
 require "json"
 require "yaml"
 require "optparse"
+require_relative "text_rewrite"
 
 ROOT = File.expand_path("..", __dir__)
 JSON_PATH = File.join(ROOT, "references/extracted/tengu_tables.json")
@@ -48,23 +49,14 @@ data = JSON.parse(File.read(JSON_PATH, encoding: "UTF-8"))
 #      · 计划 §5 表内「1版 9 表」清单逐条对齐（该清单含 wasshoi_1、**不含** サツバツ_1）
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
-# 1.5 表文本内嵌命令引用改写（2026-10-11 用户拍板方案 B）
+# 1.5 表文本改写（2026-10-11 用户拍板方案 B + C）
 #
-# 天狗原文里的 `/nd <日文表名>` / `/fnd …#n` 命令引用，在本项目纯 ASCII 定案下
-# 指向不存在的命令 → 生成期机械改写为我们的 ASCII 键。
-# 纪律：JSON 锚点（tengu_tables.json）保持逐字节保真不动；改写只在 yml 生成期
-# 发生，映射表在此声明（可审计），自检按 transform(JSON) 比对。
-# 全量扫描实证（2026-10-11）：表文本内真实命令引用仅此 2 处；『サツバツ！』等
-# 书名号内为规则散文（非命令引用）逐字保留，diehardtales.com 链接为文章引用不动。
+# 映射已迁移到共享模块 scripts/text_rewrite.rb（本脚本与 gen_table_toml.rb
+# 三方校验共用同一副本，消除重复维护风险）。拍板内容：
+#   B：表文本内嵌命令引用 ASCII 化（`/nd NSRS発狂,d`→`NSRS_D` 等 2 处）
+#   C：Discord 表情码 `:japanese_goblin:` 删除（Telegram 上只显示为裸文字）
+# 纪律：JSON 锚点保持逐字节保真不动；改写只在生成期发生；自检按 transform(JSON) 比对。
 # ---------------------------------------------------------------------------
-TEXT_REWRITE = {
-  "/nd NSRS発狂,d" => "NSRS_D",
-  "/fnd 初期ジツ系統#n" => "NJI@n",
-}.freeze
-
-def rewrite_items(items)
-  items.map { |t| TEXT_REWRITE.reduce(t) { |s, (from, to)| s.gsub(from, to) } }
-end
 
 # ---------------------------------------------------------------------------
 # 1.6 判定文案（SEISEN）—— 非表文本，走 yml 的 `judge` 段（T1.5 新增）
@@ -88,9 +80,9 @@ def build_judge_section(json_data, namespace)
     "dice_expression" => w["dice_expression"],
     "comparison" => w["comparison"],
     "SEISEN" => {
-      "judge_name" => seisen["judge_name"],
+      "judge_name" => rewrite_text(seisen["judge_name"]),
       "success_word" => w["success_word"],
-      "success_message" => seisen["success_message"],
+      "success_message" => rewrite_text(seisen["success_message"]),
       "failure_word" => w["failure_word"]
     }.freeze
   }.freeze
@@ -230,7 +222,7 @@ nsl2ex["judge"] = build_judge_section(data, "NinjaSlayer2Ex")
 # 4. 逐表生成
 # ---------------------------------------------------------------------------
 ledger = []
-stats = { nsl2ex: 0, nsl1ex: 0, pending_arb: 0, excluded: 0 }
+stats = { nsl2ex: 0, nsl1ex: 0, pending_arb: 0, excluded: 0, diverged: 0 }
 errors = []
 already = []
 
@@ -276,8 +268,23 @@ MAPPING.each do |m|
   #   于是 `next` 跳过写表，**且该表的 ledger 条目被静默丢弃**
   #   （T1.5 实测：重跑生成器后 ledger 从 25 条掉到 23 条，NSRS/NJI 消失）。
   #   对齐 §6 逐字回读自检的写法（那里比的就是 rewrite_items(...)）。
-  if existing && existing["items"] != rewrite_items(src["items"])
+  if existing && (existing["items"] != rewrite_items(src["items"]) ||
+                  existing["type"] != type || existing["name"] != "#{m[:ja]}(#{type}) ＞ ")
     already << "⚠ 键 #{key} 已存在且内容不同，**未覆盖**（请人工裁决）"
+    # kimi P4：跳过分支也必须登记 ledger（否则合法分歧时台账静默缺行——
+    # 与 T1.5 修掉的「rewrite 比对」缺陷同型）；并补 name/type 比对。
+    stats[:diverged] += 1
+    ledger << {
+      "ja_name" => m[:ja], "ascii_key" => key,
+      "target_file" => m[:kind] == :nsl1ex ? "i18n/NinjaSlayerEx/ja_jp.yml" : "i18n/NinjaSlayer2Ex/ja_jp.yml",
+      "namespace" => m[:kind] == :nsl1ex ? "NinjaSlayerEx" : "NinjaSlayer2Ex",
+      "status" => "分歧待人工（yml 未覆盖）",
+      "item_count" => src["items"].length, "char_count" => src["total_chars"],
+      "dice" => src["dice"], "datarange" => dr,
+      "data_index" => src["data_index"], "min_index" => min_idx, "max_index" => max_idx,
+      "json_path" => "$.tables[#{m[:ja].inspect}]", "source_anchor" => anchor_desc,
+      "note" => m[:note],
+    }
     next
   end
 
@@ -404,6 +411,7 @@ puts "[json_to_i18n] 2版 NinjaSlayer2Ex 表：#{stats[:nsl2ex]} 张"
 puts "[json_to_i18n] 1版 NinjaSlayerEx  表：#{stats[:nsl1ex]} 张"
 puts "[json_to_i18n] 待裁决：#{stats[:pending_arb]} 张（未写 yml，见 docs/t1.2-naming-proposal.md §A）"
 puts "[json_to_i18n] 不搬（合并上游）：#{stats[:excluded]} 张"
+puts "[json_to_i18n] 分歧未覆盖：#{stats[:diverged]} 张" if stats[:diverged] > 0
 puts "[json_to_i18n] 映射未覆盖的源表：#{uncovered.empty? ? '无' : uncovered.inspect}"
 already.each { |w| puts "[json_to_i18n] #{w}" }
 puts "[json_to_i18n] 台账：#{options[:dry_run] ? '(dry-run，未写盘)' : LEDGER_PATH.sub("#{ROOT}/", '')}"

@@ -481,11 +481,14 @@ module BCDice
       #   prefixes_pattern 的形状；为一个前缀写字符串级手术，
       #   风险高于直接修正前缀正则本身。此处选择更小的作用面。
       #
-      # ⚠ 副作用审计（已逐条跑过，见 toml 用例）：
+      # ⚠ 副作用审计（已逐条跑过，见 toml 用例 + test/engine_structure_test.rb 结构断言）：
       #   只给 **SEISEN** 这一个前缀新增了"可作为首字符被保护"的能力，
-      #   其余前缀与父类**逐字节同源**（直接展开父类 source，不重新拼），
-      #   故 SB/WSE/NSRS/KR*/NJ* 的 secret 标志行为零变化。
+      #   其余前缀与父类**逐字节同源**（正则原文经 `super.source` 取得——注意 super
+      #   以子类为 self 运行，故内层列表含子类全部前缀，SEISEN 同时出现在外层保护
+      #   分支与内层列表中；外层先命中，语义不变）。
       #   `[KENHU]` 的字符类怪癖是上游既有行为（父类单独跑也如此），本覆写原样保留。
+      #   R1 升级守卫：test/engine_structure_test.rb 断言本覆写的结构形态，
+      #   上游改 prefixes_pattern 签名/语义时当场红，而非静默劣化。
       #
       # 实现注意：父类 @prefixes_pattern 是**实例变量**而非类变量字典，
       #   但 Ruby 的类实例变量沿继承链各自独立，故这里直接重设本类的
