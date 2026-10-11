@@ -24,19 +24,15 @@
 require "test/unit"
 require "tomlrb"
 require "json"
-require "bcdice"
-require "bcdice/game_system"
-require "bcdice/translate"
 
-# 本仓库扩展加载（顺序对齐 spike_t1_1.rb）
-I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-# 去重注入（kimi-code T1.1 评审 P4）：防长进程/重复 require 时 load_path 单调增长
-new_i18n_yml = Dir[File.expand_path("../i18n/**/*.yml", __dir__)]
-I18n.load_path.concat(new_i18n_yml - I18n.load_path)
+# 引擎初始化统一走共享 bootstrap（T2.1）：
+#   reload! → 本仓库 i18n 去重注入 → require game_systems/*.rb
+# 序列曾内联复制在 8 处，任何一处漏 reload! 就是**静默**全量 MissingTranslationData
+# （i18n 缺翻译默认返回占位串不抛异常，测试照样绿）。收敛为唯一副本。
+require_relative "../lib/engine_bootstrap"
+EngineBootstrap.bootstrap!(reload_backend: true)
 
-# 加载本仓库 game_systems 下的外部扩展类。
-EXT_GAME_SYSTEMS = File.expand_path("../game_systems", __dir__)
-Dir[File.join(EXT_GAME_SYSTEMS, "*.rb")].sort.each { |f| require f }
+EXT_GAME_SYSTEMS = EngineBootstrap::GAME_SYSTEMS_DIR
 
 require_relative "randomizer_mock"
 

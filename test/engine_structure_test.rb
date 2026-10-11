@@ -46,12 +46,13 @@
 # ============================================================================
 
 require "test/unit"
-require "bcdice"
-require "bcdice/game_system"
-Dir[File.expand_path("../game_systems/*.rb", __dir__)].sort.each { |f| require f }
 
-I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-I18n.load_path.concat(Dir[File.expand_path("../i18n/**/*.yml", __dir__)] - I18n.load_path)
+# 引擎初始化统一走共享 bootstrap（T2.1）。
+# 注意：顺序上必须由 bootstrap 先完成 i18n 注入与 reload!，再 require 扩展类——
+# 旧代码把 require game_systems/ 放在 reload! 之前，序列不对但因本仓库 yml
+# 只被 translate 读取而侥幸没炸；收敛后不再依赖这类巧合。
+require_relative "../lib/engine_bootstrap"
+EngineBootstrap.bootstrap!(reload_backend: true)
 require_relative "randomizer_mock"
 
 class TestEngineStructure < Test::Unit::TestCase

@@ -18,17 +18,41 @@
 
 require "rake/testtask"
 
-# toml runner（T1.1④ + 引擎层 toml 测试入口）
+# ---------------------------------------------------------------------------
+# 两个测试框架必须**分任务**跑（不能用同一个 test_files）：
+#   - 引擎层：test-unit（与上游一致，§15.5 E9），跑 toml 确定性用例
+#   - bot/DB 层：minitest（计划 Tech Stack）
+#
+# 为什么不能混在一个任务里：minitest 的 autorun 在 at_exit 里跑完测试后会
+# `exit`，直接把进程结束掉，**test-unit 的 at_exit 根本没机会执行** →
+# 引擎层 773 条会被静默跳过（且退出码仍是 0，极易误判为"全绿"）。
+# 2026-10-11 实测踩到，故在此注释留档。
+# ---------------------------------------------------------------------------
+
+# 引擎层 toml runner + 引擎守卫（T1.1④ + T2.1 初始化守卫）
 Rake::TestTask.new(:default) do |t|
   t.libs << "test"
+  t.libs << "lib"
   t.libs << "."
   t.test_files = FileList[
+    # 引擎初始化守卫（T2.1）——须先跑：后续用例依赖 bootstrap 已完成
+    "test/engine_bootstrap_test.rb",
     "test/test_ext_game_system_commands.rb",
     "test/i18n_guard_test.rb",
     "test/karmarond_semantics_test.rb",
     "test/ledger_consistency_test.rb",
     "test/engine_structure_test.rb",
   ]
+  t.warning = false
+  t.verbose = false
+end
+
+# bot 层单元测试（T2.1：切段/配速/thread 透传/setMyCommands/token 解析/raw_api_call）
+Rake::TestTask.new(:bot) do |t|
+  t.libs << "test"
+  t.libs << "lib"
+  t.libs << "."
+  t.test_files = FileList["test/bot/test_*_test.rb"]
   t.warning = false
   t.verbose = false
 end
@@ -59,6 +83,10 @@ end
 # rake test 时默认连跑 spike + 引擎层测试，回归一气呵成
 desc "全量：spike（4 项机制）+ 引擎层 toml 测试（默认全量）"
 task full: %i[spike default]
+
+# 完整回归：引擎层 + bot 层（T2.1 起两个框架分任务）
+desc "完整回归：spike + 引擎层 toml 测试 + bot 层单测"
+task verify: %i[spike default bot]
 
 # T1.6 全量：两边的探针 + 两边的测试
 desc "T1.6 全量：天狗侧探针（node）+ 引擎侧探针（ruby）+ 全部测试"

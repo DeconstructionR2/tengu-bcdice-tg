@@ -9,9 +9,8 @@
 # 各项通过/失败汇总输出；失败不 throw，便于报告。
 # ============================================================================
 
-require "bcdice"
-require "bcdice/game_system"
-require "bcdice/translate"
+require_relative "../lib/engine_bootstrap"
+EngineBootstrap.bootstrap!
 
 # ---------------------------------------------------------------------------
 # ① 外部插件类注册
@@ -111,14 +110,16 @@ end
 #     - 两套键空间互不污染
 # ---------------------------------------------------------------------------
 def check_i18n_load_path
-  # 必须抢在首次 translate 之前；按理 require "bcdice" 后还没人 translate。
-  # 强制 reload! 确保 i18n backend 接受新 yml。
-  # 去重注入（kimi-code T1.1 评审 P4）：防重复执行时 load_path 累积
-  I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-  new_i18n_yml = Dir[File.expand_path("../i18n/**/*.yml", __dir__)]
-  I18n.load_path.concat(new_i18n_yml - I18n.load_path)
+  # 引擎初始化序列统一由 EngineBootstrap 承担（T2.1）：
+  #   reload! → 本仓库 i18n/**/*.yml 去重 concat 进 load_path → require game_systems/
+  # 文件顶部已 bootstrap 过；这里再跑一次并**断言幂等**——这正是当初踩坑的地方，
+  # 收进共享 bootstrap 后用返回值直接验证"二次调用不新增任何 load_path 条目"。
+  added_again = EngineBootstrap.inject_i18n_load_path
 
   results = []
+  results << ["② 初始化序列幂等：二次 inject_i18n_load_path 新增 0 条",
+              added_again.zero?,
+              "二次新增=#{added_again} 条（应为 0）"]
 
   # 复用一个 BCDice instance 即可（Translate mixin 提供 translate 方法）。
   # 这里直接验证 I18n.t 可命中（不必先建 game system 实例）。

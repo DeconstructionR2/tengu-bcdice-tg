@@ -82,16 +82,11 @@ OptionParser.new do |o|
 end.parse!
 
 # ============================================================================
-# 1. 加载 i18n / 扩展类（与 runner test/test_ext_game_system_commands.rb 同一序列）
+# 1. 加载 i18n / 扩展类（统一走 lib/engine_bootstrap.rb，T2.1）
 # ============================================================================
 $LOAD_PATH.unshift(File.join(ROOT, "test"))
-require "bcdice"
-require "bcdice/game_system"
-require "bcdice/translate"
-
-I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-I18n.load_path.concat(Dir[File.join(I18N_DIR, "**/*.yml")] - I18n.load_path)
-Dir[File.join(GAME_SYSTEMS_DIR, "*.rb")].sort.each { |f| require f }
+require_relative File.join(ROOT, "lib/engine_bootstrap")
+EngineBootstrap.bootstrap!(reload_backend: true)
 require "randomizer_mock"
 
 abort "[gen_table_toml] 找不到 #{LEDGER_PATH}" unless File.exist?(LEDGER_PATH)

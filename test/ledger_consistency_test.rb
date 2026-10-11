@@ -15,14 +15,11 @@
 require "test/unit"
 require "yaml"
 require "json"
-require "bcdice"
-require "bcdice/game_system"
-require "bcdice/translate"
-require_relative "../scripts/text_rewrite"
 
-I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-I18n.load_path.concat(Dir[File.expand_path("../i18n/**/*.yml", __dir__)] - I18n.load_path)
-Dir[File.expand_path("../game_systems/*.rb", __dir__)].sort.each { |f| require f }
+# 引擎初始化统一走共享 bootstrap（T2.1）
+require_relative "../lib/engine_bootstrap"
+EngineBootstrap.bootstrap!(reload_backend: true)
+require_relative "../scripts/text_rewrite"
 
 class TestLedgerConsistency < Test::Unit::TestCase
   ROOT = File.expand_path("..", __dir__)

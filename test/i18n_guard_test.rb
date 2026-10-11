@@ -19,15 +19,10 @@
 
 require "test/unit"
 require "yaml"
-require "bcdice"
-require "bcdice/translate"
-require_relative "../game_systems/NinjaSlayer2Ex"
-require_relative "../game_systems/NinjaSlayerEx"
 
-# 注入本仓库 i18n（与 runner 同一序列：reload! → 去重 concat）
-I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
-new_i18n_yml = Dir[File.expand_path("../i18n/**/*.yml", __dir__)]
-I18n.load_path.concat(new_i18n_yml - I18n.load_path)
+# 引擎初始化统一走共享 bootstrap（T2.1）：reload! → i18n 去重注入 → require game_systems/
+require_relative "../lib/engine_bootstrap"
+EngineBootstrap.bootstrap!(reload_backend: true)
 
 class TestI18nGuard < Test::Unit::TestCase
   REPO_I18N = File.expand_path("../i18n", __dir__)
