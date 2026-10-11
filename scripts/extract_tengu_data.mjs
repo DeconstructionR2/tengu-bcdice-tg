@@ -112,6 +112,8 @@ function extractTables() {
       datarange: tbl.datarange || null,
       // data_index 是实际的出目键（非 1..n 连续的表要如实记录，如 2d6 表从 2 起）
       data_index: keys,
+      // kimi P12 口径注记：template literal 源条目带尾 \n 时行数 = 可视行数+1；
+      // inline 字符串不带尾 \n。该字段仅作锚点辅助，不参与保真判定（保真看 items 逐字）。
       item_line_counts: itemLines,
       item_char_counts: keys.map((k) => data[k].length),
       total_chars: items.reduce((a, s) => a + s.length, 0),
@@ -251,7 +253,9 @@ async function extractWasshoi() {
   // 但**只登记判定分支与结构**（dice 出目是随机的，不入库）。
   // 固定 RNG 种子（xorshift）→ 保证逐次生成的 JSON **逐字节幂等**。
   // 天狗用 Math.random()，不 seed 就每次结果不同，会破坏保真锚点的可复现性。
+  // kimi P11：进程级覆盖必须在使用后恢复（哪怕脚本随即退出，也不留污染面）
   let _seed = 0x5eed1234;
+  const _origRandom = Math.random;
   Math.random = () => {
     _seed ^= _seed << 13; _seed >>>= 0;
     _seed ^= _seed >>> 17;
@@ -292,6 +296,9 @@ async function extractWasshoi() {
       errorPaths[input] = { accepted: false, error: e.message };
     }
   }
+
+  // kimi P11 恢复进程级 Math.random（探针段已结束）
+  Math.random = _origRandom;
 
   return {
     dice_expression: "2d6",

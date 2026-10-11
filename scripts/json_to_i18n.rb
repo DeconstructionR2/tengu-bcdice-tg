@@ -92,28 +92,25 @@ MAPPING = [
   { ja: "生い立ち_1", kind: :nsl1ex, key: "BK", status: :planned,
     note: "1版 ネオサイタマ生い立ち d36（36 条）" },
 
-  # ===================== 待裁决（4 张：上游 BCDice 已有同源表）===============
-  # 事实依据（scripts/_crosscheck_tables.mjs 实测，详见 docs/t1.2-coverage-audit.md §2）：
-  #   天狗[サツバツ]            vs 上游 NinjaSlayer2.table.SATSUBATSU → 正文同源，天狗多一层「加粗效果摘要标题」+ markdown 化 + 换行重排
-  #   天狗[wasshoiエントリー]  vs 上游 NinjaSlayer2.table.WASSHOI     → 同上（且**条目顺序不同**：天狗把「KRAAAAASH」排在第 3 项）
-  #   天狗[nrs発狂]             vs 上游 NinjaSlayer2.table.NRS         → 正文同源，天狗多摘要标题
-  #   天狗[サツバツ_1]          vs 上游 NinjaSlayer.SATSUBATSU_TABLE   → 归一化后 6/6 **完全同源**，纯重复
-  { ja: "サツバツ", kind: nil, key: nil, status: :pending_arb,
-    note: "**待裁决**。上游 BCDice NinjaSlayer2.table.SATSUBATSU 已覆盖同表（正文同源），天狗版多一层 " \
-          "『**痛烈な一撃**：『痛打+1』、『弾き飛ばし』』式**加粗效果摘要标题** + `「…」`→`**…**：` markdown 化 + 换行重排。" \
-          "三种处置待用户选：(A) 不搬——继承上游 SB 即可，丢失天狗的摘要标题；(B) 搬进 NinjaSlayer2Ex 但用**不同 ASCII 键**（如 SBT）" \
-          "让 Ex 侧 `/SB` 仍走父类，天狗风格表走新键；(C) 搬进 NinjaSlayerEx 与 1版 SB 同键空间。" },
-  { ja: "wasshoiエントリー", kind: nil, key: nil, status: :pending_arb,
-    note: "**待裁决**。同 サツ巴ツ：上游 NinjaSlayer2.table.WASSHOI 已覆盖。天狗版除摘要标题外还有" \
-          "**条目顺序差异**（天狗第 3 项 =「KRAAAAASH 窓を突き破り出現！」，上游第 5 项才是它），" \
-          "不是纯呈现差异 → 顺序语义差异须用户裁决。" },
-  { ja: "nrs発狂", kind: nil, key: nil, status: :pending_arb,
-    note: "**待裁决**。上游 BCDice NinjaSlayer2.table.NRS 已覆盖（type 1D7，7 条，正文同源），天狗版多摘要标题。" \
-          "计划 §5 只把「NSRS発狂」列为 BCDice 缺失项（已按 :nsl2ex/NSRS 搬入），**未提 nrs発狂** → 默认不搬。" },
-  { ja: "サツバツ_1", kind: nil, key: nil, status: :pending_arb,
-    note: "**待裁决**。与上游 1版 NinjaSlayer 内联 SATSUBATSU_TABLE 归一化后 6/6 **完全同源**（纯 markdown/全角呈现差异），" \
-          "而 1版 NinjaSlayer 已有 SB 命令 → 纯重复。计划 §5 的「1版 9 表」清单里也是 wasshoi_1 而**非** サツバツ_1，" \
-          "与本实测一致。建议不搬（见 docs/t1.2-naming-proposal.md §A2）。" },
+  # ===================== 待裁决 → 已定案（2026-10-11 用户拍板）===============
+  # 事实依据（主 agent 复核版，详见 docs/t1.2-coverage-audit.md §2.3 更正留档）：
+  #   天狗[サツバツ/wasshoiエントリー/nrs発狂] vs 上游 2版同名表 → 正文同源且**出目同序**，
+  #     差异仅天狗多 markdown 加粗摘要标题（初版"顺序冲突"系比对器 bug 误报，已证伪）
+  #   天狗[サツバツ_1] vs 上游 1版内联 SATSUBATSU_TABLE → 同序同内容（仅全角数字呈现差）
+  # 拍板 D1-A1=B：2版两张以新键 SBX/WSX 搬入（保留天狗摘要标题呈现）；
+  # 拍板 D1-A2/A3：nrs発狂 / サツバツ_1 不搬，类似功能合并入既有上游命令（NRS / SB）。
+  { ja: "サツバツ", kind: :nsl2ex, key: "SBX", status: :planned,
+    note: "2版 サツバツ 天狗呈现版（含加粗摘要标题，与上游 SATSUBATSU 正文同源同序）。" \
+          "父类 SB 走上游纯文本版，SBX 走天狗版——并存是拍板结论（D1-A1=B）。" },
+  { ja: "wasshoiエントリー", kind: :nsl2ex, key: "WSX", status: :planned,
+    note: "2版 wasshoiエントリー 天狗呈现版（含加粗摘要标题，与上游 WASSHOI 正文同源同序）。" \
+          "父类 WSE 走上游版，WSX 走天狗版（D1-A1=B）。" },
+  { ja: "nrs発狂", kind: nil, key: nil, status: :excluded,
+    note: "不搬（拍板 D1-A3）：上游 NinjaSlayer2.table.NRS 已覆盖（正文同源、7/7 同序），" \
+          "类似功能合并入既有 NRS 命令。NSRS 侧缺失已由 NSRS 键补齐。" },
+  { ja: "サツバツ_1", kind: nil, key: nil, status: :excluded,
+    note: "不搬（拍板 D1-A2）：与上游 1版内联 SATSUBATSU_TABLE 同序同内容（仅全角数字呈现差），" \
+          "类似功能合并入既有 1版 SB 命令。" },
 ].freeze
 
 # ---------------------------------------------------------------------------
@@ -143,8 +140,13 @@ def to_bcdice_type(expr)
   "#{m[1].empty? ? 1 : m[1]}D#{m[2]}"
 end
 
-# 每骰型的出目偏移（min）与可达范围，供命令层索引分发
-def dice_offsets(dice)
+# 每骰型的自然出目范围（参考信息）。
+# ⚠ 索引一律用**表级 min_index**（ledger.index_rule），不存在"每骰型偏移"：
+#    天狗语义是单一绝对键表 data[sumall]，yml 摊平为 0 基数组后
+#    查表恒为 items[clamp(sum) - min_index]。含 +N 的骰型（如 1d6+1）其天然
+#    下限 2 高于表下限 1，若按"每骰型偏移"索引必错位（kimi P1 的初版公式
+#    与建议修正 per-dice lo 均被数据证伪：data_index 实测含低于骰型下限的键）。
+def dice_ranges(dice)
   dice.map do |k, expr|
     m = expr.to_s.match(/(\d*)d(\d+)([+-]\d+|x)?/i)
     next unless m
@@ -152,12 +154,8 @@ def dice_offsets(dice)
     times = m[1].empty? ? 1 : m[1].to_i
     sides = m[2].to_i
     off = m[3].to_s.sub(/x\z/, "").to_i
-    [k, expr, "#{times}d#{sides}", times * 1 + off, times * sides + off]
-  end.compact.map { |k, expr, base, lo, hi| { "key" => k, "expr" => expr, "base" => base, "min_sum" => lo, "max_sum" => hi, "items_offset" => lo - times_for(base) } }
-end
-
-def times_for(base)
-  base[/\A(\d*)[dD]/, 1].to_s.empty? ? 1 : base[/\A(\d*)[dD]/, 1].to_i
+    { "key" => k, "expr" => expr, "base" => "#{times}d#{sides}", "min_sum" => times + off, "max_sum" => times * sides + off }
+  end.compact
 end
 
 # ---------------------------------------------------------------------------
@@ -180,7 +178,7 @@ nsl1ex["table"] ||= {}
 # 4. 逐表生成
 # ---------------------------------------------------------------------------
 ledger = []
-stats = { nsl2ex: 0, nsl1ex: 0, pending_arb: 0 }
+stats = { nsl2ex: 0, nsl1ex: 0, pending_arb: 0, excluded: 0 }
 errors = []
 already = []
 
@@ -200,11 +198,11 @@ MAPPING.each do |m|
   dr = src["datarange"]
   multi_dice = src["dice"].keys.length > 1
 
-  if m[:status] == :pending_arb
-    stats[:pending_arb] += 1
+  if m[:status] == :pending_arb || m[:status] == :excluded
+    stats[m[:status]] += 1
     ledger << {
       "ja_name" => m[:ja], "ascii_key" => nil, "target_file" => nil, "namespace" => nil,
-      "status" => "待裁决",
+      "status" => (m[:status] == :excluded ? "不搬（合并上游）" : "待裁决"),
       "item_count" => src["items"].length, "char_count" => src["total_chars"],
       "dice" => src["dice"], "datarange" => dr,
       "data_index" => src["data_index"], "min_index" => min_idx, "max_index" => max_idx,
@@ -237,7 +235,7 @@ MAPPING.each do |m|
     "dice" => src["dice"], "datarange" => dr,
     "data_index" => src["data_index"], "min_index" => min_idx, "max_index" => max_idx,
     "index_rule" => "天狗 data[出目]（绝对）→ BCDice items[出目-#{min_idx}]；偏移恒为 #{min_idx}",
-    "dice_offsets" => dice_offsets(src["dice"]),
+    "dice_ranges" => dice_ranges(src["dice"]),
     "roll_note" => multi_dice ? "多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）" : "单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用",
     "yml_type" => type, "yml_name" => name,
     "multi_dice" => multi_dice,
@@ -267,8 +265,7 @@ def dump_yaml(namespace, tables, path, ledger_rows)
     # 源数据：references/extracted/tengu_tables.json
     #         ← node scripts/extract_tengu_data.mjs 直接 require 钉版快照
     #           TenguDiceBot@ca3d85a (v4.2.1) 的 nd_datatable.js / nd_datatext.js
-    #
-    # 生成时间：#{Time.now.strftime('%Y-%m-%d %H:%M:%S')}
+    #         （产物不含时间戳——全管线逐字节幂等，重跑 md5 不变即未被手工改动）
     # 本命名空间表键：#{keys}
     # 键名约定：纯 ASCII（计划 §13 第 2 项）；日文原表名见
     #          references/extracted/i18n_key_ledger.yml 与 docs/t1.2-naming-proposal.md
@@ -284,10 +281,9 @@ unless options[:dry_run]
   dump_yaml("NinjaSlayer2Ex", nsl2ex["table"], OUT_NSL2EX, ledger)
   dump_yaml("NinjaSlayerEx", nsl1ex["table"], OUT_NSLEX, ledger)
   File.write(LEDGER_PATH, YAML.dump({
-    "generated_at" => Time.now.strftime("%Y-%m-%d %H:%M:%S"),
     "source_json" => "references/extracted/tengu_tables.json",
     "source_commit" => data["_meta"]["source_commit"],
-    "counts" => { "已映射" => stats[:nsl2ex] + stats[:nsl1ex], "待裁决" => stats[:pending_arb] },
+    "counts" => { "已映射" => stats[:nsl2ex] + stats[:nsl1ex], "待裁决" => stats[:pending_arb], "不搬" => stats[:excluded] },
     "entries" => ledger,
   }, line_width: -1), encoding: "UTF-8")
 end
@@ -316,6 +312,12 @@ unless options[:dry_run]
       want_type = to_bcdice_type(src["dice"]["a"] || src["dice"].values.first)
       selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} type 应为 #{want_type} 实为 #{got['type']}" if got["type"] != want_type
       selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} name 不一致" if got["name"] != "#{m[:ja]}(#{want_type}) ＞ "
+      # 索引语义不变量（kimi P1 落地）：items 数 == data_index 跨度（连续区间），
+      # 否则命令层 items[clamp(sum) - min_index] 会错位
+      idxs = src["data_index"].map(&:to_i)
+      if got["items"].length != idxs.max - idxs.min + 1
+        selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} items 数(#{got['items'].length}) 与 data_index 跨度(#{idxs.min}..#{idxs.max}) 不符"
+      end
     end
   end
 end
@@ -326,6 +328,7 @@ end
 puts "[json_to_i18n] 2版 NinjaSlayer2Ex 表：#{stats[:nsl2ex]} 张"
 puts "[json_to_i18n] 1版 NinjaSlayerEx  表：#{stats[:nsl1ex]} 张"
 puts "[json_to_i18n] 待裁决：#{stats[:pending_arb]} 张（未写 yml，见 docs/t1.2-naming-proposal.md §A）"
+puts "[json_to_i18n] 不搬（合并上游）：#{stats[:excluded]} 张"
 puts "[json_to_i18n] 映射未覆盖的源表：#{uncovered.empty? ? '无' : uncovered.inspect}"
 already.each { |w| puts "[json_to_i18n] #{w}" }
 puts "[json_to_i18n] 台账：#{options[:dry_run] ? '(dry-run，未写盘)' : LEDGER_PATH.sub("#{ROOT}/", '')}"

@@ -8,8 +8,7 @@
 # 源数据：references/extracted/tengu_tables.json
 #         ← node scripts/extract_tengu_data.mjs 直接 require 钉版快照
 #           TenguDiceBot@ca3d85a (v4.2.1) 的 nd_datatable.js / nd_datatext.js
-#
-# 生成时间：2026-10-11 16:02:33
+#         （产物不含时间戳——全管线逐字节幂等，重跑 md5 不变即未被手工改动）
 # 本命名空间表键：WS, JITSB, DKKI, KRM, CYBER, BIOCYBER, SOUL, SUMMON, BK
 # 键名约定：纯 ASCII（计划 §13 第 2 项）；日文原表名见
 #          references/extracted/i18n_key_ledger.yml 与 docs/t1.2-naming-proposal.md

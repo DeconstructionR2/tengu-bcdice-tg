@@ -1,10 +1,10 @@
 ---
-generated_at: '2026-10-11 16:02:33'
 source_json: references/extracted/tengu_tables.json
 source_commit: ca3d85a
 counts:
-  已映射: 21
-  待裁决: 4
+  已映射: 23
+  待裁决: 0
+  不搬: 2
 entries:
 - ja_name: nsrs発狂
   ascii_key: NSRS
@@ -30,31 +30,27 @@ entries:
   min_index: 1
   max_index: 7
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: c
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: d
     expr: 1d3+1
     base: 1d3
     min_sum: 2
     max_sum: 4
-    items_offset: 1
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'nsrs発狂(1D3) ＞ '
@@ -93,31 +89,27 @@ entries:
   min_index: 1
   max_index: 12
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3+x
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d6+x
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: c
     expr: 1d6+1+x
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: d
     expr: 2d6+x
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'ソウカイヤカルマロンダリング(1D3) ＞ '
@@ -150,31 +142,27 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3+x
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d3+1+x
     base: 1d3
     min_sum: 2
     max_sum: 4
-    items_offset: 1
   - key: c
     expr: 2d3+x
     base: 2d3
     min_sum: 2
     max_sum: 6
-    items_offset: 0
   - key: d
     expr: d3+3+x
     base: 1d3
     min_sum: 4
     max_sum: 6
-    items_offset: 3
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'ザイバツカルマロンダリング(1D3) ＞ '
@@ -207,31 +195,27 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3+x
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d3+1+x
     base: 1d3
     min_sum: 2
     max_sum: 4
-    items_offset: 1
   - key: c
     expr: 2d3+x
     base: 2d3
     min_sum: 2
     max_sum: 6
-    items_offset: 0
   - key: d
     expr: d3+3+x
     base: 1d3
     min_sum: 4
     max_sum: 6
-    items_offset: 3
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'アマクダリカルマロンダリング(1D3) ＞ '
@@ -264,31 +248,27 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3+x
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d3+1+x
     base: 1d3
     min_sum: 2
     max_sum: 4
-    items_offset: 1
   - key: c
     expr: 2d3+x
     base: 2d3
     min_sum: 2
     max_sum: 6
-    items_offset: 0
   - key: d
     expr: d3+3+x
     base: 1d3
     min_sum: 4
     max_sum: 6
-    items_offset: 3
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'オムラカルマロンダリング(1D3) ＞ '
@@ -321,31 +301,27 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d3+x
     base: 1d3
     min_sum: 1
     max_sum: 3
-    items_offset: 0
   - key: b
     expr: 1d3+1+x
     base: 1d3
     min_sum: 2
     max_sum: 4
-    items_offset: 1
   - key: c
     expr: 2d3+x
     base: 2d3
     min_sum: 2
     max_sum: 6
-    items_offset: 0
   - key: d
     expr: d3+3+x
     base: 1d3
     min_sum: 4
     max_sum: 6
-    items_offset: 3
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D3
   yml_name: 'ヨロシサンカルマロンダリング(1D3) ＞ '
@@ -373,13 +349,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: '初期ジツ系統(1D6) ＞ '
@@ -407,13 +382,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: '初期スキル(1D6) ＞ '
@@ -441,13 +415,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: '初期アイテム(1D6) ＞ '
@@ -505,13 +478,12 @@ entries:
   min_index: 1
   max_index: 36
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d36
     base: 1d36
     min_sum: 1
     max_sum: 36
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D36
   yml_name: '初期知識スキル(1D36) ＞ '
@@ -539,13 +511,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: '初期サイバネ(1D6) ＞ '
@@ -603,13 +574,12 @@ entries:
   min_index: 1
   max_index: 36
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d36
     base: 1d36
     min_sum: 1
     max_sum: 36
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D36
   yml_name: '生い立ち(1D36) ＞ '
@@ -637,13 +607,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: 'wasshoiエントリー_1(1D6) ＞ '
@@ -681,67 +650,57 @@ entries:
   min_index: 1
   max_index: 7
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: b
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: d
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: d6
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: 1d
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: 1d6
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: d+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: 1d+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: d6+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: 1d6+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D6
   yml_name: 'ジツ拡張サイバネ暴走_1(1D6) ＞ '
@@ -769,13 +728,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: '暗黒カラテ衝動_1(1D6) ＞ '
@@ -821,85 +779,72 @@ entries:
   min_index: 1
   max_index: 12
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: b
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: c
     expr: 2d6
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   - key: d
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: d6
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: 1d
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: 1d6
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   - key: d+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: 1d+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: d6+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: 1d6+1
     expr: 1d6+1
     base: 1d6
     min_sum: 2
     max_sum: 7
-    items_offset: 1
   - key: 2d
     expr: 2d6
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   - key: 2d6
     expr: 2d6
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   roll_note: 多骰型表：type 只表达默认骰型 a；,b/,c/,d 与 +x 補正由命令层分发（datarange 钳制）
   yml_type: 1D6
   yml_name: 'カルマロンダリング_1(1D6) ＞ '
@@ -932,13 +877,12 @@ entries:
   min_index: 2
   max_index: 12
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-2]；偏移恒为 2
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 2d6
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 2D6
   yml_name: 'サイバネ狂気判定_1(2D6) ＞ '
@@ -966,13 +910,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: 'バイオサイバネ狂気判定_1(1D6) ＞ '
@@ -1000,13 +943,12 @@ entries:
   min_index: 1
   max_index: 6
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d6
     base: 1d6
     min_sum: 1
     max_sum: 6
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D6
   yml_name: 'ソウル鑑定_1(1D6) ＞ '
@@ -1039,13 +981,12 @@ entries:
   min_index: 2
   max_index: 12
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-2]；偏移恒为 2
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 2d6
     base: 2d6
     min_sum: 2
     max_sum: 12
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 2D6
   yml_name: 'ソーマトリコール_1(2D6) ＞ '
@@ -1103,13 +1044,12 @@ entries:
   min_index: 1
   max_index: 36
   index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
-  dice_offsets:
+  dice_ranges:
   - key: a
     expr: 1d36
     base: 1d36
     min_sum: 1
     max_sum: 36
-    items_offset: 0
   roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
   yml_type: 1D36
   yml_name: '生い立ち_1(1D36) ＞ '
@@ -1118,10 +1058,10 @@ entries:
   source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:433-473
   note: 1版 ネオサイタマ生い立ち d36（36 条）
 - ja_name: サツバツ
-  ascii_key:
-  target_file:
-  namespace:
-  status: 待裁决
+  ascii_key: SBX
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
   item_count: 6
   char_count: 855
   dice:
@@ -1136,15 +1076,25 @@ entries:
   - '6'
   min_index: 1
   max_index: 6
-  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_ranges:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: 'サツバツ(1D6) ＞ '
+  multi_dice: false
   json_path: $.tables["サツバツ"]
   source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:90-100
-  note: "**待裁决**。上游 BCDice NinjaSlayer2.table.SATSUBATSU 已覆盖同表（正文同源），天狗版多一层 『**痛烈な一撃**：『痛打+1』、『弾き飛ばし』』式**加粗效果摘要标题** + `「…」`→`**…**：` markdown 化 + 换行重排。三种处置待用户选：(A) 不搬——继承上游 SB 即可，丢失天狗的摘要标题；(B) 搬进 NinjaSlayer2Ex 但用**不同 ASCII 键**（如 SBT）让 Ex 侧 `/SB` 仍走父类，天狗风格表走新键；(C) 搬进 NinjaSlayerEx 与 1版 SB 同键空间。"
+  note: 2版 サツバツ 天狗呈现版（含加粗摘要标题，与上游 SATSUBATSU 正文同源同序）。父类 SB 走上游纯文本版，SBX 走天狗版——并存是拍板结论（D1-A1=B）。
 - ja_name: wasshoiエントリー
-  ascii_key:
-  target_file:
-  namespace:
-  status: 待裁决
+  ascii_key: WSX
+  target_file: i18n/NinjaSlayer2Ex/ja_jp.yml
+  namespace: NinjaSlayer2Ex
+  status: 已映射
   item_count: 6
   char_count: 723
   dice:
@@ -1159,15 +1109,25 @@ entries:
   - '6'
   min_index: 1
   max_index: 6
-  index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
+  index_rule: 天狗 data[出目]（绝对）→ BCDice items[出目-1]；偏移恒为 1
+  dice_ranges:
+  - key: a
+    expr: 1d6
+    base: 1d6
+    min_sum: 1
+    max_sum: 6
+  roll_note: 单骰型表：type 与 data_index 全域一致，Table.from_i18n 可直接用
+  yml_type: 1D6
+  yml_name: 'wasshoiエントリー(1D6) ＞ '
+  multi_dice: false
   json_path: $.tables["wasshoiエントリー"]
   source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:101-111
-  note: "**待裁决**。同 サツ巴ツ：上游 NinjaSlayer2.table.WASSHOI 已覆盖。天狗版除摘要标题外还有**条目顺序差异**（天狗第 3 项 =「KRAAAAASH 窓を突き破り出現！」，上游第 5 项才是它），不是纯呈现差异 → 顺序语义差异须用户裁决。"
+  note: 2版 wasshoiエントリー 天狗呈现版（含加粗摘要标题，与上游 WASSHOI 正文同源同序）。父类 WSE 走上游版，WSX 走天狗版（D1-A1=B）。
 - ja_name: nrs発狂
   ascii_key:
   target_file:
   namespace:
-  status: 待裁决
+  status: 不搬（合并上游）
   item_count: 7
   char_count: 1025
   dice:
@@ -1188,12 +1148,12 @@ entries:
   index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
   json_path: $.tables["nrs発狂"]
   source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:259-274
-  note: "**待裁决**。上游 BCDice NinjaSlayer2.table.NRS 已覆盖（type 1D7，7 条，正文同源），天狗版多摘要标题。计划 §5 只把「NSRS発狂」列为 BCDice 缺失项（已按 :nsl2ex/NSRS 搬入），**未提 nrs発狂** → 默认不搬。"
+  note: 不搬（拍板 D1-A3）：上游 NinjaSlayer2.table.NRS 已覆盖（正文同源、7/7 同序），类似功能合并入既有 NRS 命令。NSRS 侧缺失已由 NSRS 键补齐。
 - ja_name: サツバツ_1
   ascii_key:
   target_file:
   namespace:
-  status: 待裁决
+  status: 不搬（合并上游）
   item_count: 6
   char_count: 941
   dice:
@@ -1211,4 +1171,4 @@ entries:
   index_rule: 天狗原文 data[出目]（绝对索引）；BCDice items[出目-1] → 偏移恒为 1（T1.3~T1.7 命令层须对齐）
   json_path: $.tables["サツバツ_1"]
   source_anchor: TenguDiceBot/tengu_dice/nd_datatable.js:292-302
-  note: "**待裁决**。与上游 1版 NinjaSlayer 内联 SATSUBATSU_TABLE 归一化后 6/6 **完全同源**（纯 markdown/全角呈现差异），而 1版 NinjaSlayer 已有 SB 命令 → 纯重复。计划 §5 的「1版 9 表」清单里也是 wasshoi_1 而**非** サツバツ_1，与本实测一致。建议不搬（见 docs/t1.2-naming-proposal.md §A2）。"
+  note: 不搬（拍板 D1-A2）：与上游 1版内联 SATSUBATSU_TABLE 同序同内容（仅全角数字呈现差），类似功能合并入既有 1版 SB 命令。

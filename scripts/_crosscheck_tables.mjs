@@ -81,7 +81,7 @@ const fw2half = (s) =>
   s
     .replace(/＋/g, "+")
     .replace(/－/g, "-")
-    .replace(/ー/g, "-")
+    // kimi P5：`ー→-` 全局替换误伤日文长音（ユーザー→ユ-ザ-），已删除
     .split("")
     .map((c) => {
       const i = FW_DIGIT.indexOf(c);
@@ -94,12 +94,15 @@ const norm1 = (s) =>
     .replace(/\*\*/g, "")
     .replace(/　/g, " ")
     .replace(/–/g, "-")
+    // kimi P4：剥天狗摘要标题尾的全角冒号（`标题`：\n本体 vs 上游 `标题` \n本体）
+    .replace(/：/g, "")
     .replace(/\s+/g, "");
 
 const norm2 = (s) => {
   const t = norm1(s);
-  // 天狗摘要在条目开头，形如 `腹部の痛打：『…』`，其后再跟正文本体
-  const m = t.match(/^[^『「]{2,24}：：『[^』]*』/);
+  // 天狗摘要在条目开头，形如 `腹部の痛打：『…』`（『』可省略），其后再跟正文本体
+  // kimi P3：初版正则写死双全角冒号 `：：` 永不命中（死代码），已修为单 `：` 并放宽『』
+  const m = t.match(/^[^『「\n]{2,30}：(『[^』]*』)?/);
   if (m) return t.slice(m[0].length);
   return t;
 };
