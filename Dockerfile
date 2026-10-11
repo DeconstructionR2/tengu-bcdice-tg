@@ -25,7 +25,7 @@
 # ============================================================================
 
 # --- 阶段 1/3：builder（构建闸门）-------------------------------------------
-FROM ruby:3.4-slim AS builder
+FROM ruby:3.4-slim@sha256:c12225b6a73743f943530d9e610f4ae78e0dbcffdcf797b01522a55f7d25acb3 AS builder
 
 # 原生扩展编译依赖（bigdecimal/racc 等；sqlite3 走 lock 内预编译平台版，
 # libsqlite3-dev 只是保险——预编译版万一不可用时可回退源码编译）
@@ -54,7 +54,7 @@ COPY . .
 RUN bundle exec rake verify
 
 # --- 阶段 2/3：gems（只装生产组）--------------------------------------------
-FROM ruby:3.4-slim AS gems
+FROM ruby:3.4-slim@sha256:c12225b6a73743f943530d9e610f4ae78e0dbcffdcf797b01522a55f7d25acb3 AS gems
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -69,7 +69,7 @@ COPY Gemfile Gemfile.lock ./
 RUN BUNDLE_WITHOUT=test BUNDLE_FROZEN=true bundle install --jobs 4 --retry 3
 
 # --- 阶段 3/3：runtime（精简运行镜像）---------------------------------------
-FROM ruby:3.4-slim AS runtime
+FROM ruby:3.4-slim@sha256:c12225b6a73743f943530d9e610f4ae78e0dbcffdcf797b01522a55f7d25acb3 AS runtime
 
 # 运行期系统依赖：SQLite 共享库（预编译 gem 已静态带库，此处兜底可移植性）
 RUN apt-get update \
@@ -81,11 +81,14 @@ RUN apt-get update \
 # lock 里 test 组 gem 未安装而 GemNotFound。
 COPY --from=gems /usr/local/bundle /usr/local/bundle
 ENV BUNDLE_WITHOUT=test \
+    BUNDLE_FROZEN=true \
     BUNDLE_APP_CONFIG=/usr/local/bundle \
     LANG=C.UTF-8
 
 # 非 root 运行（计划 §9 容器化纪律）。
-# uid/gid 1000 与宿主机部署账号（<deploy-user>）对齐：数据卷文件互读互写无需 chown 舞蹈。
+# uid 1000 与宿主机部署账号（<deploy-user>）对齐——卷文件读写走 owner 位即可；
+# 注意 gid 1000 在宿主侧是 netdev 组而非 <deploy-user> 组（无害，owner 位足够，
+# kimi T4.1 评审提案 #4 订正此处注释口径）。
 RUN groupadd --gid 1000 tengu \
  && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin tengu
 

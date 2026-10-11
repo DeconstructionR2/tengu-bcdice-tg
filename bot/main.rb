@@ -68,6 +68,10 @@
 $stdout.sync = true
 $stderr.sync = true
 
+# docker stop 的 SIGTERM 落 Ruby 默认处理会以 exit 1 收尾——监控/编排视角的
+# 「脏退出」。显式 trap 成 exit 0（正常停止语义；kimi T4.1 评审提案 #5）
+Signal.trap("TERM") { exit(0) }
+
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
 require_relative "config"
