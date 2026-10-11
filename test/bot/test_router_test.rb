@@ -639,9 +639,11 @@ class TestRouter < Minitest::Test
     assert_nil @router.parse_slash("/start@OtherBot")
   end
 
-  def test_bot_username_nil_accepts_any_at_suffix
+  def test_bot_username_nil_rejects_at_suffix
+    # fail-closed（kimi T2.3 评审）：username 未知时带 @后缀的命令一律拒答——
+    # 宁可不答也不抢别的 bot 的命令（多 bot 群里的静默策略承诺）。
     router = TelegramBot::Router.new(api: @api, bot_username: nil)
-    assert router.bot_matched?("anything"), "未注入 username 时不拦 @后缀"
+    refute router.bot_matched?("anything"), "未注入 username 时不得响应任何 @后缀命令"
   end
 
   def test_edited_message_is_routed
@@ -688,7 +690,10 @@ class TestRouter < Minitest::Test
     noise = ["hello", "hi", "ok", "OK", "no", "yes", "version", "today", "abc",
              "x", "NJ", "EV", "AT", "EL", "K", "CC", "1", "4", "6", "100",
              "3.5", "2024-10-11", "12:30", "6+3", "SOULx", "BIOCYBERR", "AT4x",
-             "NJ4x", "SB_", "(1+2)*3", "today is 3d6 day"]
+             "NJ4x", "SB_", "(1+2)*3", "today is 3d6 day",
+             # 追加判定子片段裸用（kimi T2.3 评审抓到 RE_EX_APPENDIX_ONE 泄漏）：
+             # 单字母闲聊最常见的形态，四类引擎全返回 nil，闸门必须拒
+             "J", "L", "j", "l", "=6", ">=4", "sJ", "S=6", "x3 l", "x3 =6"]
 
     hits = noise.select { |text| @router.aux_match?(text) }
     assert_empty hits, "闸门放行了非骰式文本（会抢话）：#{hits.inspect}"

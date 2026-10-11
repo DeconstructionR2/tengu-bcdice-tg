@@ -8,7 +8,7 @@
 #      命令集合 = TelegramApi::MainMenu::ENTRIES（start/help/settings/roll/nd/
 #      system/secret/bank/ct/log）。
 #   2. **辅助轨裸 ASCII 骰式**：整条消息匹配骰式/命令语法特征才路由
-#      （`N4,3`/`SB`/`SB@6`/`NRS_E4`/`2d6>=4[=6]`）。
+#      （`N4,3`/`SB`/`SB@6`/`NRS_E4`/`2d6>=4`/`N4,3[J]`）。
 #   3. **静默策略**：不命中一律不回复（防抢话）。群里常驻别的 bot，
 #      bot 乱回就是噪声（§6「严格触发」「不命中 → 静默」）。
 #   4. **分发 + 回发**：handler 结果经注入的 TelegramApi 发回，并带上入站
@@ -26,9 +26,10 @@
 #   两支合并后整体 \A…\z 锚定。
 #
 #   闸门是**语法闸**不是语义闸：语法像但引擎会返回 nil 的输入
-#   （如 `NRS`、`SB_`、`1`）允许路由过去，由 T2.4 的 handler 调引擎拿结果。
+#   （如 `NRS`——NRS@3 才有效）允许路由过去，由 T2.4 的 handler 调引擎拿结果。
 #   这是刻意的——闸门宁可多放（handler 能给出"引擎不接受"）也不误杀（漏掷骰），
 #   而**闲聊误命中**才是必须防的（§12 R4）。实测见 docs/t2.3-report.md §2。
+#   （注：`SB_`/裸数字实测**不**过闸——锚定正则比前缀筛子严，安全方向。）
 #
 # ── 其余硬约束 ────────────────────────────────────────────────────────
 #   - **纯 ASCII**：含非 ASCII 直接不命中（§13 第 2 项；日文一律不响应）。
@@ -48,8 +49,10 @@ module TelegramBot
   module AuxMatcher
     # 表达式语法（镜像 BCDice::CommonCommand 的 Lexer / AddDice::Parser）：
     #   词法单位 = 数字、比较符 [<>!=]、方括号、@、+-*/ 与单字母 D/B/T/R/U/C。
-    #   覆盖 `2d6>=4[=6]`、`1d100>=50`、`2d6+3`、`3d6/2`、`1d6*2`、`2B6>=4`、
+    #   覆盖 `2d6>=4`、`1d100>=50`、`2d6+3`、`3d6/2`、`1d6*2`、`2B6>=4`、
     #   `3TY3`、`3R4`、`3U4`、`D66`、`choice[a,b]`、`C1+2`、`d6` 等。
+    #   （注：追加判定 `[J]`/`[=6]` 只对连续判定类命令有效——`N4,3[J]` 成立，
+    #   `2d6>=4[=6]` 引擎四系统全 nil；评审实测更正，勿再把后者当命令示例。）
     #
     # **裸数字不进这一支**：引擎实测 `6` / `100` / `4` / `4,3` 全部返回 nil
     # （AddDice 需含 d/B；2 版连续判定需难度字母），放进来就是纯抢话。
@@ -115,12 +118,30 @@ module TelegramBot
     #
     # 只收「首尾都锚」的（`\A…\z` 或 `^…$`）；单边锚定的（如 RE_COUNT_JUDGE
     # 只收尾）是子片段，直接收会误放行。
-    # 「松散」连续判定正则的常量名（跨 NinjaSlayer2 / NinjaSlayer2Ex 同名）
-    LOOSE_DICEROLL_PATTERNS = %i[RE_JUDGE_DICEROLL RE_EX_DICEROLL].freeze
+    # 「松散」正则的常量名排除名单（跨 NinjaSlayer2 / NinjaSlayer2Ex 同名）：
+    #   - RE_JUDGE_DICEROLL / RE_EX_DICEROLL：连续判定。脱掉 prefixes_pattern
+    #     前缀闸门后直接收它 = 放行裸数字（`4`/`6`/`100`）= 抢话。
+    #     本模块的 DIFFICULTY_EXPR 正是「带难度字母」的严格版，覆盖同样命令。
+    #   - RE_EX_APPENDIX_ONE：追加判定的**括号内子片段**（`[J]`/`[=6]` 等，只该
+    #     跟在骰式后面）。整条收割会放行裸 `J`/`L`/`=6`（kimi 评审实测四类引擎
+    #     全 nil、闸门却命中 = 单字母闲聊抢话）。括号形态由 TAILS 的 BRACKET
+    #     覆盖（`N4,3[J]` 不受影响）。
+    # ⚠️ `constants` 返回的是 **Symbol**，名单必须 %i[...]——写成字符串
+    #   会静默永不命中（T2.3 实施期实测踩过，见报告 §2.3 D4-2）。
+    EXCLUDED_PATTERN_NAMES = %i[RE_JUDGE_DICEROLL RE_EX_DICEROLL RE_EX_APPENDIX_ONE].freeze
 
     def anchored?(source)
-      (source.start_with?("\\A") && source.end_with?("\\z")) ||
+      anchored_ends =
+        (source.start_with?("\\A") && source.end_with?("\\z")) ||
         (source.start_with?("^") && source.end_with?("$"))
+      return false unless anchored_ends
+
+      # 加固（kimi T2.3 评审 Q5）：剥掉两端锚点后，中段不得再出现**裸** ^/$
+      # （如 `^A$|^B$` 形态剥完会留下行锚，拼进外层造成奇异匹配）。
+      # 转义的 \| \^ \$ 与字符类内的不算（当前 15 条源均无此形态，纯未来防御）。
+      body = unwrap_anchor(source)
+      stripped = body.gsub(/\\./, "").gsub(/\[[^\]]*\]/, "")
+      !stripped.match?(/[\^$]/)
     end
 
     # 去掉两端的锚点，交由外层统一的 \A…\z 包裹
@@ -147,14 +168,9 @@ module TelegramBot
           end
           next unless value.is_a?(Regexp)
           next unless anchored?(value.source)
-          # 跳过**松散**的连续判定正则（RE_JUDGE_DICEROLL / RE_EX_DICEROLL）：
-          # 它们单独看会放行裸数字（`^((?:(?:UH|[KENHU])?\d+,?)+)...$` 命中 `4`/`6`/`100`），
-          # 因为引擎是先过 prefixes_pattern（要求 [KENHU]/UH/SB 等前缀）才轮到它。
-          # 脱掉那道前缀闸门后直接收它 = 把裸数字放进辅助轨 = 抢话。
-          # 本模块的 DIFFICULTY_EXPR 正是「带难度字母」的严格版，覆盖同样的命令。
-          # ⚠️ `const` 是 **Symbol**，排除名单也必须用 Symbol——写成字符串
-          #   会静默永不命中，裸数字照样进闸门（实测踩过，见报告 §2.3）。
-          next if LOOSE_DICEROLL_PATTERNS.include?(const)
+          # 排除「脱掉引擎前缀闸门后会误放行」的松散正则/子片段
+          # （名单与理由见 EXCLUDED_PATTERN_NAMES 注释；名单必须 Symbol）。
+          next if EXCLUDED_PATTERN_NAMES.include?(const)
 
           unwrap_anchor(value.source)
         end
@@ -266,9 +282,16 @@ module TelegramBot
     def self.default_systems
       return [] unless defined?(::BCDice)
 
-      AuxMatcher::DEFAULT_SYSTEM_IDS.filter_map { |id| ::BCDice.game_system_class(id) }
-    rescue StandardError
-      []
+      AuxMatcher::DEFAULT_SYSTEM_IDS.filter_map do |id|
+        # 按 id 逐个兜：一个解析失败只丢这一个，**不得**让整个列表清零
+        # （kimi T2.3 评审：整体 rescue 会让闸门静默退化成纯通用骰式且无报警）。
+        begin
+          ::BCDice.game_system_class(id)
+        rescue StandardError => e
+          warn("[router] 规则类 #{id} 解析失败，已跳过（闸门少一条规则分支）：#{e.class}")
+          nil
+        end
+      end
     end
 
     # ------------------------------------------------------------------
@@ -466,8 +489,12 @@ module TelegramBot
     # ------------------------------------------------------------------
 
     # @return [Boolean] @后缀是否指向本 bot
+    #
+    # **fail-closed**（kimi T2.3 评审）：username 未知（getMe 失败/未注入）时
+    # **拒答一切带 @后缀**的命令——宁可不答，也不冒抢答别的 bot 命令的风险
+    # （多 bot 群里 `/start@OtherBot` 被我们应答 = 静默策略破防）。
     def bot_matched?(at_bot)
-      return true if @bot_username.nil? # 未知 → 不拦（单 bot 部署的常见情形）
+      return false if @bot_username.nil?
 
       at_bot.to_s.casecmp?(@bot_username.to_s.delete_prefix("@"))
     end

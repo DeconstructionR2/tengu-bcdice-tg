@@ -215,7 +215,9 @@ class TestSend < Minitest::Test
 
     assert_equal [1, 2, 3, 4], seen, "异常那条之后的后续 update 仍必须被处理"
     assert_match(/dispatch 处理失败/, err)
-    assert_match(/boom on 2/, err)
+    assert_match(/RuntimeError/, err, "日志应记异常类名")
+    # 隐私（kimi T2.3 评审）：异常 message 可能夹带用户正文 inspect，**不得**进日志
+    refute_match(/boom on 2/, err, "日志不得含异常 message（可能夹带用户正文）")
   end
 
   def test_process_updates_returns_normally_when_every_message_raises

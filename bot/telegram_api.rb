@@ -272,7 +272,7 @@ module TelegramBot
           dispatch.call(update)
         rescue StandardError => e
           # 兜底：记录后继续，绝不把异常抛出循环
-          warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}: #{e.message}")
+          warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}")
         end
       end
     end
@@ -284,7 +284,7 @@ module TelegramBot
         begin
           dispatch.call(update)
         rescue StandardError => e
-          warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}: #{e.message}")
+          warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}")
         end
       end
     end
