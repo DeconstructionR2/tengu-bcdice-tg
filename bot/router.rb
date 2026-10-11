@@ -554,12 +554,31 @@ module TelegramBot
     # （gem client.rb:41-47），不是 Update。只认 Update 形态会让全量消息在
     # 此静默归零（症状：bot 在线、无任何回复、无报错日志）。
     # 故本方法**两种形态都收**：Update 取其 current_message；Message 直接用。
+    #
+    # **current_message 的另两类真实形状**（2026-10-12 Phase 2 验收期实证，
+    # gem update.rb 的 current_message = 第一个非 nil 属性）：
+    #   - **callback_query** update → yield **CallbackQuery 本体**（不是 nil！
+    #     本文件与 telegram_api.rb 早先注释「会被 yield nil」是错的，已更正）。
+    #     CallbackQuery 带 `message` 属性指向按钮所附的原消息——不加守卫，
+    #     按一次按钮会被误当成「原消息被重发」而二次路由（原消息文本若恰好
+    #     过闸门就会白掷一次骰）。故显式跳过；T3.1 的暗骰「公开」按钮应在
+    #     dispatch 前加正式的 callback 路由分支（需要 query.id 与 data）。
+    #   - **edited_message** update → yield 编辑后的 Message（`edit_date`
+    #     非 nil 是唯一与新消息的区分点）。骰子 bot 对编辑重掷会产生两个
+    #     不同的随机结果（「哪次算数」混乱）且是刷骰向量 → 一律跳过，
+    #     打错了请重发一条。注意 Message 形态接缝无法区分「编辑」与「新发」，
+    #     只能靠 Message 自带的 edit_date 字段判别。
     def extract_message(update)
       return nil if update.nil?
+
+      # 按钮回调不是消息（见方法头注释）；T3.1 接正式 callback 路由
+      return nil if callback_query_shaped?(update)
 
       # Message 形态直通（respond_to? chat+text 且不响应 current_message）
       if !update.respond_to?(:current_message) &&
          update.respond_to?(:chat) && update.respond_to?(:text)
+        return nil if edited_message?(update)
+
         return update
       end
 
@@ -570,7 +589,9 @@ module TelegramBot
           update.message
         end
 
+      return nil if callback_query_shaped?(message)
       return nil unless message.respond_to?(:text)
+      return nil if edited_message?(message)
 
       message
     end
@@ -580,6 +601,20 @@ module TelegramBot
       return false unless message.respond_to?(:migrate_to_chat_id)
 
       !message.migrate_to_chat_id.nil? || !message.migrate_from_chat_id.nil?
+    end
+
+    # CallbackQuery 形状判别（extract_message 的守卫，见该方法头注释）。
+    # `chat_instance` 是 CallbackQuery 在所有 update 负载类型中独有的属性
+    # （gem 2.8.1 types/callback_query.rb），配上 `data` 双判据防误判。
+    # 测试假身/未来 Types 新增类型只要不同时带这两个属性就不受影响。
+    def callback_query_shaped?(obj)
+      !obj.nil? && obj.respond_to?(:chat_instance) && obj.respond_to?(:data)
+    end
+
+    # 编辑过的消息？（gem 的 Message 恒响应 edit_date，新消息为 nil；
+    # 测试假身不响应 edit_date 时视为新消息——与既有测试语料兼容）
+    def edited_message?(message)
+      message.respond_to?(:edit_date) && !message.edit_date.nil?
     end
 
     def user_id_of(message)

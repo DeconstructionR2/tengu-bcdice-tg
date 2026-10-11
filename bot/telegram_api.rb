@@ -267,9 +267,15 @@ module TelegramBot
       client = @api_client
       client.listen do |event|
         # ⚠️ gem 接缝实测：listen yield 的是 handle_update 的返回值 =
-        # update.current_message——**Message 而非 Update**（gem client.rb:41-47）。
-        # Router#extract_message 两种形态都收；callback_query 等非消息 update
-        # 会被 yield nil，Router 对 nil 安全（extract_message 直接返回 nil）。
+        # update.current_message——**通常是 Message 而非 Update**
+        # （gem client.rb:41-47）。Router#extract_message 两种形态都收。
+        # current_message 的准确语义 = 「第一个非 nil 属性」（update.rb），故：
+        #   - 无负载 update（如纯 my_chat_member 以外的空壳）会 yield nil
+        #     → Router 对 nil 安全（extract_message 直接返回 nil）；
+        #   - callback_query update 会 yield **CallbackQuery 本体**（不是 nil），
+        #     edited_message update 会 yield **编辑后的 Message**（edit_date 非 nil）
+        #     → 两者由 Router#extract_message 显式守卫跳过（2026-10-12 验收期
+        #     实证更正：本注释早先版本「callback_query 会被 yield nil」是错的）。
         begin
           dispatch.call(event)
         rescue StandardError => e
