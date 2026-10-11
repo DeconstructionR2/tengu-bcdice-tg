@@ -24,6 +24,20 @@ KEEP=7
 
 ts() { date '+%F %T'; }
 
+# ---------- 防并发双跑（kimi T4.2 评审提案 #1）：两个进程并发会互删当日备份
+# （rm 同名 + 双写），实测可致当日零备份且无人察觉。flock 自互斥 ----------
+exec 9>"${TENGU_BACKUP_LOCK:-/opt/<project>/.backup.lock}"
+if ! flock -n 9; then
+  echo "tengu-backup: ERROR 另一实例正在跑，本次退出" >&2
+  exit 1
+fi
+
+# ---------- 路径含单引号 = .backup 点命令解析会炸（kimi T4.2 评审提案 #4），
+# 提前明确拒绝（失败安全）----------
+case "$DB$BACKUP_DIR" in
+  *"'"*) echo "tengu-backup: ERROR 路径含单引号，.backup 无法承载：$DB / $BACKUP_DIR" >&2; exit 1 ;;
+esac
+
 # ---------- 未上线：DB 还不存在 → 一行说明，静默跳过 ----------
 if [ ! -f "$DB" ]; then
   echo "$(ts) tengu-backup: 跳过——DB 不存在（$DB，未上线或尚未生成）"
@@ -41,22 +55,25 @@ if ! mkdir -p "$BACKUP_DIR" 2>/dev/null || [ ! -w "$BACKUP_DIR" ]; then
 fi
 chmod 700 "$BACKUP_DIR" 2>/dev/null || true   # 备份含群聊数据，收紧到属主（失败不致命）
 
-# ---------- 在线一致备份（同日重复跑：先删旧同名，幂等） ----------
+# ---------- 在线一致备份（同日重复跑幂等；tmp+mv：旧同日档在新档验完前不动，
+# 失败不丢既有备份——kimi T4.2 评审提案 #1） ----------
 TARGET="$BACKUP_DIR/tengu-$(date +%Y%m%d).db"
-rm -f "$TARGET"
-if ! sqlite3 "$DB" ".backup '$TARGET'"; then
-  rm -f "$TARGET"   # 不留半成品：坏文件会让「最新备份」假新鲜，反而掩盖告警
-  echo "tengu-backup: ERROR sqlite3 .backup 失败：$DB -> $TARGET（sqlite3 报错见上一行）" >&2
+TARGET_TMP="$TARGET.tmp-$$"
+rm -f "$TARGET_TMP"
+if ! sqlite3 "$DB" ".backup '$TARGET_TMP'"; then
+  rm -f "$TARGET_TMP"   # 不留半成品：坏文件会让「最新备份」假新鲜，反而掩盖告警
+  echo "tengu-backup: ERROR sqlite3 .backup 失败：$DB -> $TARGET_TMP（sqlite3 报错见上一行）" >&2
   exit 1
 fi
 
 # ---------- 备份自检（小库毫秒级；坏副本当场暴露，而不是等恢复时） ----------
-CHECK=$(sqlite3 "$TARGET" "PRAGMA integrity_check;" 2>&1)
+CHECK=$(sqlite3 "$TARGET_TMP" "PRAGMA integrity_check;" 2>&1)
 if [ "$CHECK" != "ok" ]; then
-  rm -f "$TARGET"
-  echo "tengu-backup: ERROR 备份完整性检查未过：$TARGET（integrity_check=$CHECK）" >&2
+  rm -f "$TARGET_TMP"
+  echo "tengu-backup: ERROR 备份完整性检查未过：$TARGET_TMP（integrity_check=$CHECK）" >&2
   exit 1
 fi
+mv -f "$TARGET_TMP" "$TARGET"
 
 # ---------- 保留最近 KEEP 份（文件名字典序=时间序；严格形态防误删） ----------
 OLD=$(cd "$BACKUP_DIR" && ls -1 tengu-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].db 2>/dev/null | sort | head -n -"$KEEP")
