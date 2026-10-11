@@ -3233,7 +3233,7 @@ rands = [
   { sides = 6, value = 1 },
 ]
 
-# 暗骰 SSBX（S 前缀保护泛化的受益者）
+# 暗骰 SSBX（S 前缀保护泛化的回归钉——T1.5 形态经 SB 前缀截断已可用，泛化是预防性收益（kimi 二审口径更正））
 [[ test ]]
 game_system = "NinjaSlayer2Ex"
 input = "SSBX"
@@ -3387,3 +3387,62 @@ rands = [
 
 
 # <<< END GENERATED: T1.6 APPENDIX_EX
+
+# ---------------------------------------------------------------------------
+# kimi T1.6 二审回归用例（P1 难度沿承 / P2 新旧混排 / P3a 倍率边界）
+# output 由修复后真实 eval 机械采集（2026-10-11）。
+# ---------------------------------------------------------------------------
+
+# K6,6[J]（kimi P1 回归：连掷第二段难度沿承 >=2，不得退化为 >=0）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6,6[J]"
+output = "(6B6>=2) ＞ 5,6,1,2,3,4 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n(6B6>=2) ＞ 5,6,1,2,3,4 ＞ 成功数:5, ジツ暴走[=1]:1[1] \n"
+success = true
+failure = false
+rands = [
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 2 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 4 },
+]
+
+# K6[J][=6]（kimi P2 回归：新旧 appendix 混排合法）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[J][=6]"
+output = "(6B6>=2) ＞ 6,1,5,4,3,2 ＞ 成功数:5, ジツ暴走[=1]:1[1], 追加判定[=6]:1[6] \n"
+success = true
+failure = false
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 4 },
+  { sides = 6, value = 3 },
+  { sides = 6, value = 2 },
+]
+
+# K6[>=5*.]（kimi P3a 回归：裸小数点倍率按天狗 isNaN 分支落 1）
+[[ test ]]
+game_system = "NinjaSlayer2Ex"
+input = "K6[>=5*.]"
+output = "(6B6>=2) ＞ 6,5,1,1,1,1 ＞ 成功数:2, 追加判定[>=5]:2[6,5] \n"
+success = true
+failure = false
+rands = [
+  { sides = 6, value = 6 },
+  { sides = 6, value = 5 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+  { sides = 6, value = 1 },
+]

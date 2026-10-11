@@ -755,7 +755,7 @@ T16_COMBO_CASES = [
   ["K6,N6[J]",     rolls12(1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6),
    ["ジツ暴走[=1]:1[1]"], "逗号连掷 × 追加判定（两次掷骰各带一段）"],
   ["K6[>=5*2][=1*3]", rolls6(5, 1, 2, 3, 4, 1), ["追加判定[>=5]:2[5]", "追加判定[=1]:6[1,1]"], "倍率段 ×2（两段倍率各自独立）"],
-  ["SSBX", rolls6(3), ["サツバツ"], "暗骰 SSBX（S 前缀保护泛化的受益者）"],
+  ["SSBX", rolls6(3), ["サツバツ"], "暗骰 SSBX（S 前缀保护泛化的回归钉——T1.5 形态经 SB 前缀截断已可用，泛化是预防性收益（kimi 二审口径更正））"],
 ].freeze
 
 T16_ERROR_CASES = [
@@ -799,7 +799,7 @@ def generate_appendix_ex_block
           lines.insert(5, "failure = #{result.failure?}")
           # 暗骰标志同样从真实 Result 取。SSBX 这类用例必须带 secret = true，
           # 否则 runner 的 `assert_equal(data[:secret], result.secret?)` 会红
-          # （S 前缀保护泛化后 SSBX 终于可用——这正是 T1.6 的附带收益之一）。
+          # （S 前缀保护泛化的预防性收益；T1.5 形态下 SSBX 经 SB 前缀截断已可用——kimi 二审口径更正）。
           lines.insert(6, "secret = #{result.secret?}") if result.secret?
           expect_frags.each do |frag|
             next if output.include?(frag)

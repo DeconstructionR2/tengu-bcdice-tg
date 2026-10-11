@@ -580,7 +580,8 @@ module BCDice
       # ⚠ `*x`（非数字）**故意不收**：天狗会降级成倍率 1 并照常输出，
       #   ASCII 侧让整条命令不响应——玩家打 `[>=5*x]` 时多半是把倍率写错了，
       #   静默按 1 输出比不响应更危险（他以为生效了）。报告 §5 申报为有意收紧。
-      RE_APPENDIX_BAIRITSU = /\A\d*\.?\d*\z/.freeze
+      # （注：倍率数字串的权威形态定义在 APPENDIX_ONE_FRAGMENT 内联，
+      #   初版的 RE_APPENDIX_BAIRITSU 死常量已删除——kimi P3c。）
 
       # 追加判定（appendix）单条形态的**无锚点片段**。
       #
@@ -601,8 +602,8 @@ module BCDice
       #   于是组 1 匹配的是整个比较形态 `">=5*2"` 而非判定符 `">="`，
       #   组号整体错位。这是本任务实现期真实踩到的坑（`K6[>=5*2]` 静默不响应）。
       #
-      # 分组：1 判定符、2 y、3 倍率串、4 记忆符字母。
-      APPENDIX_ONE_FRAGMENT = "(?:(=|!=|>=|>|<=|<)([1-6])\\*([\\d]*\\.?[\\d]*)|([JL]))".freeze
+      # 分组：1 判定符、2 y、3 倍率串（可缺省：无 `*` 段 → nil）、4 记忆符字母。
+      APPENDIX_ONE_FRAGMENT = "(?:(=|!=|>=|>|<=|<)([1-6])(?:\\*([\\d]*\\.?[\\d]*))?|([JL]))".freeze
 
       # 单条 appendix 的完整正则 = 片段 + 锚点。
       # 与 RE_EX_DICEROLL 用**同一个**片段常量拼装 → 两者同源是构造保证，
@@ -769,8 +770,11 @@ module BCDice
         output_text = ''
         total_success_num = 0
 
+        # kimi P1：难度初始化在循环**外**、段内只升级不重置——与父类
+        # proc_dice_2nd 逐字对齐（NinjaSlayer2.rb:247-253）。
+        # （初版在循环内重置 → `K6,6[J]` 第二段退化成 6B6>=0 全员成功）
+        difficulty = 0
         dice_part.split(",").each do |sub_command|
-          difficulty = 0
           /^(UH|[KENHU])?(\d+)$/i.match(sub_command)
           unless Regexp.last_match[1].nil?
             difficulty = DIFFICULTY_SYMBOL_TO_INTEGER.fetch(Regexp.last_match[1])
@@ -817,7 +821,9 @@ module BCDice
           # border 从 i18n 读出来是 **Integer**，而比较分支的 y 是 **String**。
           # 两条路径必须统一成 String 之后才能共用 to_i，
           # 故此处显式 to_s（第一版漏了这一步 → NoMethodError on Integer）。
-          memo_i18n = appendix_ex_memo(memo)
+          # kimi P3d：RE_EX_APPENDIX_ONE 带 IGNORECASE，直调路径小写 memo（j/l）
+          # 会撞 translate 的 raise:true → upcase 一行防御。
+          memo_i18n = appendix_ex_memo(memo.upcase)
           border = memo_i18n.fetch(:border).to_s
           label = memo_i18n.fetch(:label)
           op = APPENDIX_MEMO_OPERATOR
@@ -826,10 +832,21 @@ module BCDice
           op = m[1]
           label = nil
           border = m[2]
-          # 天狗 Appendix.js:19 的默认值分支：空串 → 0（Number('') === 0）。
-          # 正则已保证倍率串是合法数字串，故这里不会遇到 NaN。
+          # 倍率三分支逐字对齐天狗 Appendix.js:19（`strArray[4] != null && !isNaN(...)`）：
+          #   无 `*` 段（nil）        → undefined → 默认 1（kimi P2：[=6] 等老形态）
+          #   `*` 后空串             → Number('')===0 → 0（天狗同源）
+          #   合法数字（含 1. / .5）  → to_f
+          #   其余（如裸 `.`）        → isNaN → 默认 1（kimi P3a）
           raw_bairitsu = m[3]
-          bairitsu = raw_bairitsu.empty? ? 0 : raw_bairitsu.to_f
+          bairitsu = if raw_bairitsu.nil?
+                       1
+                     elsif raw_bairitsu.empty?
+                       0
+                     elsif raw_bairitsu.match?(/\A(?:\d+\.?\d*|\.\d+)\z/)
+                       raw_bairitsu.to_f
+                     else
+                       1
+                     end
           return nil if bairitsu > self.class.appendix_bairitsu_max
         end
 
@@ -905,10 +922,11 @@ module BCDice
       # 倍率后的计数值 → 输出字符串。
       #
       # 天狗那边是 JS 浮点（`appSum += 2.5` 得 7.5，`String(7.5)` → "7.5"）。
-      # Ruby 侧同形：小数保留**恰好一位**（7.5），整数不带小数点（6）。
+      # Ruby 侧同形：整数去小数点（7.0 → "7"），小数按 JS String 语义原样
+      # （2.25 → "2.25"，5.5 → "5.5"）——先 round(4) 消除 0.1+0.2 类浮点噪声。
+      # （kimi P3f：初版注释误写「小数保留恰好一位」，与 2.25 行为不符。）
       # 不能用 `app_sum.round.to_s`（会把 7.5 打成 8，与天狗不一致）。
-      # 也不能用 `to_s` 直接出 "7.5" 之外的形态（0.1+0.2 类浮点噪声），
-      # 故先 round 到 4 位消除噪声，再按「整数/一位小数」规范化。
+      # 也不能用裸 `to_s`（浮点噪声），故 round(4) + truncate 判定。
       #
       # @param value [Float]
       # @return [String]
