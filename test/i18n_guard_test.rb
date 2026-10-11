@@ -21,6 +21,8 @@ require "test/unit"
 require "yaml"
 require "bcdice"
 require "bcdice/translate"
+require_relative "../game_systems/NinjaSlayer2Ex"
+require_relative "../game_systems/NinjaSlayerEx"
 
 # 注入本仓库 i18n（与 runner 同一序列：reload! → 去重 concat）
 I18n.backend.reload! if I18n.backend.respond_to?(:reload!)
@@ -73,6 +75,45 @@ class TestI18nGuard < Test::Unit::TestCase
                        "#{ns}.table.#{key}.#{attr} 运行时解析值与 gem 原值不一致（被遮蔽或漂移）")
         end
       end
+    end
+  end
+
+  # Ex 类展示常量守卫（kimi-code T1.1 评审 P5）
+  #
+  # 背景：bot 侧列举游戏系统走 bcdice-api 的 NAME / SORT_KEY（dicebots.rb、
+  #   controller/v2.rb 都是 sort_by { |k| k::SORT_KEY } + map { NAME }）。
+  #   Ex 类若裸继承父类常量，列表里会出现两个一模一样的条目、排序还退化，
+  #   bot 的 /system 作用域选择会认不准。
+  #
+  # 三条断言：
+  #   1. Ex 的 NAME 不等于其父类 NAME（不撞名）
+  #   2. Ex 的 SORT_KEY 不等于其父类 SORT_KEY（排序键不撞）
+  #   3. 在**全部**已注册游戏系统里，NAME 与 SORT_KEY 都全局唯一
+  #      （只查本仓两个 Ex 不够——真实风险是全局撞名）
+  EX_CLASSES = {
+    "NinjaSlayer2Ex" => BCDice::GameSystem::NinjaSlayer2Ex,
+    "NinjaSlayerEx" => BCDice::GameSystem::NinjaSlayerEx
+  }.freeze
+
+  def test_ex_classes_dont_inherit_parent_display_constants
+    EX_CLASSES.each do |id, klass|
+      parent = klass.superclass
+      assert_not_equal(parent::NAME, klass::NAME,
+                       "#{id}::NAME 裸继承了父类 NAME（#{parent::NAME.inspect}），" \
+                       "bot 列系统时会与 #{parent} 撞名")
+      assert_not_equal(parent::SORT_KEY, klass::SORT_KEY,
+                       "#{id}::SORT_KEY 裸继承了父类 SORT_KEY（#{parent::SORT_KEY.inspect}）")
+    end
+  end
+
+  def test_ex_display_constants_globally_unique
+    systems = BCDice.all_game_systems
+
+    %w[NAME SORT_KEY].each do |const|
+      dup = systems.group_by { |g| g.const_get(const) }
+                  .select { |_, v| v.size > 1 }
+                  .map { |val, v| [val, v.map { |g| g.name.split("::").last }] }
+      assert_equal([], dup, "#{const} 在已注册游戏系统中不唯一（#{dup.inspect}）")
     end
   end
 end
