@@ -232,7 +232,7 @@ class TestAdmin < Minitest::Test
 
   def test_false_is_not_cached
     # 缓存一个 false 会让**刚上任**的管理员在 TTL 内改不了设置；
-    # 缓存一个 true 最多让刚被撤职的多改一次——代价不对称，故只缓存 true。
+    # 缓存一个 true 在 TTL 内仍可改设置（不限次数）——代价不对称，故只缓存 true。
     admin, fake = admin_with(status: "member")
 
     3.times { refute admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup") }

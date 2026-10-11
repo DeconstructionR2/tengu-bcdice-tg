@@ -270,4 +270,49 @@ class TestSchemaEvolution < Minitest::Test
                    "在有数据的旧库上 ALTER 会直接失败")
     end
   end
+
+  # --- 反向守卫（kimi T2.6 评审）----------------------------------------------
+  # 正向守卫已钉「登记的列必须在新库建出」；本条钉反向——**只在 schema.sql
+  # 加列、忘了登记 COLUMN_ADDITIONS**：旧库部署后该列不存在，查询当场炸。
+  # 做法：schema.sql 里每张表的列集 − 该表 T2.4 基线列 = 必须全部登记在
+  # COLUMN_ADDITIONS 里。
+
+  # T2.4 七表原始列（计划 §4.1 定案）。演进只能通过 COLUMN_ADDITIONS 加列；
+  # 直接改这张基线表 = 明确宣告「我在破坏旧库兼容」（审慎动作，故放行）。
+  SCHEMA_BASELINE_COLUMNS = {
+    "chat_settings"   => %w[chat_id thread_id game_system updated_at],
+    "bank_record"     => %w[chat_id thread_id sum_money money_record item_record updated_at],
+    "custom_tables"   => %w[id scope chat_id name spec permissions datarange author_id created_at updated_at],
+    "secrets"         => %w[id chat_id thread_id user_id command result_text created_at],
+    "chat_id_aliases" => %w[old_chat_id new_chat_id migrated_at],
+    "session_logs"    => %w[id chat_id thread_id name status created_at ended_at],
+    "log_entries"     => %w[id log_id seq sender_name user_id is_bot msg_kind content created_at],
+  }.freeze
+
+  def test_schema_sql_columns_beyond_baseline_are_registered
+    sql = File.read(File.expand_path("../../db/schema.sql", __dir__))
+    ddl_blocks = sql.scan(/CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\);/m)
+    refute_empty ddl_blocks, "应从 schema.sql 解析出建表块（解析失败=守卫失效）"
+
+    ddl_blocks.each do |table, body|
+      columns = body.lines.map(&:strip).filter_map do |line|
+        next if line.empty? || line.start_with?("--")
+
+        first = line.split.first.to_s.downcase
+        next if first.match?(/\A(?:unique|primary|foreign|check|constraint)\b/)
+
+        first
+      end
+
+      baseline = SCHEMA_BASELINE_COLUMNS[table] || []
+      extra = columns - baseline
+      registered = TenguDB::Connection::COLUMN_ADDITIONS
+                   .select { |t, _, _| t == table }.map { |_, c, _| c }
+      unregistered = extra - registered
+
+      assert_empty unregistered,
+                   "#{table} 的列 #{unregistered.inspect} 超出 T2.4 基线却未登记 " \
+                   "COLUMN_ADDITIONS——旧库升级后会缺列（登记的列才会被 ensure_column 补上）"
+    end
+  end
 end
