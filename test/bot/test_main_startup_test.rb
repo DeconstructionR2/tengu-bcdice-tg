@@ -76,13 +76,16 @@ class TestMainStartup < Minitest::Test
         end
         # T3.5：log 导出的 document 通道。内容在**调用那一刻**读（handler 发完
         # 即删临时目录），转成 UTF-8 以便 JSON.dump（rb 读取默认 ASCII-8BIT）。
+        # document 是 FilePart（multipart 真相：respond_to content_type 才上
+        # wire 为文件部件）：文件名取 original_filename，内容读内层 io。
         def self.send_document(**params)
+          doc = params[:document]
           $DOCUMENTS << {
             "chat_id" => params[:chat_id],
             "thread_id" => params[:message_thread_id],
-            "filename" => params[:filename],
+            "filename" => (doc.respond_to?(:original_filename) ? doc.original_filename : nil),
             "caption" => params[:caption],
-            "content" => params[:document].read.force_encoding("UTF-8")
+            "content" => (doc.respond_to?(:io) ? doc.io : doc).read.force_encoding("UTF-8")
           }
           :ok
         end

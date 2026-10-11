@@ -86,11 +86,16 @@ module TelegramBot
       # @param settings [TenguDB::Settings, nil] 规则系统三级查找
       # @param secrets [TenguDB::Secrets, nil] 暗骰结果存取（nil = 单连接新建）
       # @param resolver [#call] id → 规则类（nil = 走 EngineResolver）
+      # @param session_log [#record_bot_output, nil] 跑团 log 录制器（nil = 不录）——
+      #   只用于「公开」路径：公开后的结果已是群内公开消息，进 log 符合 R8 口径
+      #   （kimi T3.5 评审提案 #4）
       # @param logger [#warn, nil] 只记结构性信息，绝不记用户正文
-      def initialize(settings: nil, secrets: nil, resolver: nil, logger: ::Logger.new($stderr))
+      def initialize(settings: nil, secrets: nil, resolver: nil, session_log: nil,
+                     logger: ::Logger.new($stderr))
         @settings = settings
         @secrets = secrets
         @resolver = resolver || EngineResolver.method(:call)
+        @session_log = session_log
         @logger = logger
       end
 
@@ -184,6 +189,13 @@ module TelegramBot
         end
 
         secrets.delete(secret.id) # E5：公开成功后删行（发送成功才删）
+
+        # 公开后的暗骰已是群内公开消息——进 log（R8 口径：录的是公开内容）。
+        # 本路径自走 api.send_text、不到 router 挂钩②，不显式录则导出的 log
+        # 会缺这段「群里人人可见」的内容（kimi T3.5 评审提案 #4）
+        @session_log&.record_bot_output(chat_id: secret.chat_id,
+                                        thread_id: secret.thread_id,
+                                        text: secret.result_text)
         nil
       end
 

@@ -181,7 +181,11 @@ module TelegramBot
         name = sender_chat.respond_to?(:title) ? sender_chat.title : nil if sender_chat
       end
 
-      { name: (name.nil? || name.to_s.empty?) ? UNKNOWN_SENDER : name.to_s,
+      # 控制字符剥除（kimi T3.5 评审提案 #9）：显示名/群头衔若含 \n 等，
+      # 会拆坏 txt 导出的行格式——落库前一律剥掉
+      clean = name.to_s.gsub(/[[:cntrl:]]/, "")
+
+      { name: clean.empty? ? UNKNOWN_SENDER : clean,
         user_id: user_id.nil? ? nil : user_id.to_i }
     end
 

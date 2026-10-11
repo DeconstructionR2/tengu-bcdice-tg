@@ -620,11 +620,13 @@ module TelegramBot
 
       # handler 直接返回文本 → 由 router 代发（带 thread 透传）
       if result.is_a?(String) && !result.empty?
-        send(chat_id, result, thread_id: thread_id)
+        sent = send(chat_id, result, thread_id: thread_id)
         # --- 录制挂钩 ②（T3.5）：bot 自己的输出（掷骰结果/命令应答）同点落盘 ---
         # is_bot=1。暗骰结果**结构性**到不了这里：SecretDiceHandler 恒返回 nil、
         # 自走 ephemeral（见该文件纪律 1）——不靠本层 if 判断兜底。
-        record_bot_output(chat_id: chat_id, thread_id: thread_id, text: result)
+        # 发送失败（send 内部 rescue 归 []）时不录——「群里实际发出的文本才进 log」
+        # （kimi T3.5 评审提案 #5）
+        record_bot_output(chat_id: chat_id, thread_id: thread_id, text: result) unless sent.empty?
       end
 
       result

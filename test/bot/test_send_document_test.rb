@@ -58,9 +58,10 @@ class TestSendDocument < Minitest::Test
     private
 
     def read_from_current_position(doc)
-      return nil unless doc.respond_to?(:read)
+      target = doc.respond_to?(:io) ? doc.io : doc # FilePart 包装时读其内层 io
+      return nil unless target.respond_to?(:read)
 
-      doc.read
+      target.read
     rescue IOError, Errno::ESPIPE, Errno::EINVAL
       nil
     end
@@ -94,7 +95,10 @@ class TestSendDocument < Minitest::Test
       api.send_document(77, path)
 
       call = fake.calls.fetch(0)
-      assert_kind_of File, call[:document], "String 路径应被打开成 File 交给 gem"
+      document = call[:document]
+      assert_respond_to document, :content_type,
+                        "document 必须是 FilePart 形态——否则 faraday-multipart 不触发、整请求落 urlencoded（Telegram 400，kimi T3.5 评审必修 #1）"
+      assert_kind_of File, document.io, "String 路径应被打开成 File 再包 FilePart"
       assert_equal "hello log", call[:content], "gem 必须能读到文件真实内容"
       assert_equal 77, call[:params][:chat_id]
     end
@@ -106,7 +110,7 @@ class TestSendDocument < Minitest::Test
       api.send_document(77, path)
 
       document = fake.calls.fetch(0)[:document]
-      assert_predicate document, :closed?,
+      assert_predicate document.io, :closed?,
                        "本方法自己打开的 IO 必须在 ensure 里关闭（不漏 fd）"
     end
   end
@@ -122,8 +126,8 @@ class TestSendDocument < Minitest::Test
       api, fake, = build_doc_api
       api.send_document(77, tf)
 
-      assert_same tf, fake.calls.fetch(0)[:document],
-                  "Tempfile 必须**原样**传给 gem（按 to_path 重开会丢掉 fd 语义）"
+      assert_same tf, fake.calls.fetch(0)[:document].io,
+                  "Tempfile 必须**原样**包进 FilePart（按 to_path 重开会丢掉 fd 语义）"
       refute_predicate tf, :closed?, "调用方传进来的 IO 不得被本方法关闭"
     end
   end
@@ -140,7 +144,7 @@ class TestSendDocument < Minitest::Test
       api, fake, = build_doc_api
       api.send_document(77, tf)
 
-      assert_same tf, fake.calls.fetch(0)[:document],
+      assert_same tf, fake.calls.fetch(0)[:document].io,
                   "修复前会被 File.open(tf.path) 重开成另一个 File —— 对象同一性断言在此鉴别"
       # gem 应从调用方 fd 的当前位置继续读；若被重开则会从 0 读到 "0123"
       assert_equal "456789", fake.calls.fetch(0)[:content]
@@ -160,8 +164,8 @@ class TestSendDocument < Minitest::Test
       api, fake, = build_doc_api
       api.send_document(77, reader) # 修复前此处 TypeError
 
-      assert_same reader, fake.calls.fetch(0)[:document],
-                  "无 to_path 的 IO 必须原样透传（修复前 File.open 会 TypeError）"
+      assert_same reader, fake.calls.fetch(0)[:document].io,
+                  "无 to_path 的 IO 必须原样包进 FilePart（修复前 File.open 会 TypeError）"
       assert_equal "piped bytes", fake.calls.fetch(0)[:content]
       refute_predicate reader, :closed?, "调用方的 IO 生命周期归调用方，本方法不得关闭"
     ensure
@@ -178,7 +182,7 @@ class TestSendDocument < Minitest::Test
     # 不应抛 TypeError/IOError —— 本方法对非 String 一律不碰 fd
     api.send_document(77, io)
 
-    assert_same io, fake.calls.fetch(0)[:document]
+    assert_same io, fake.calls.fetch(0)[:document].io
   end
 
   # --- 附属参数与配速 -----------------------------------------------------
@@ -195,23 +199,43 @@ class TestSendDocument < Minitest::Test
     end
   end
 
-  # T3.5 修复：filename 形参此前从未进 params（临时路径的随机名会原样上 wire）
-  def test_filename_is_forwarded_when_given
+  # kimi T3.5 评审提案 #2：Bot API 的 sendDocument **没有** filename 表单字段——
+  # 文件名只能由 FilePart 的 Content-Disposition filename 带过去；
+  # 往 params 塞 filename 是被服务端忽略的额外表单项
+  def test_filename_is_forwarded_via_file_part
     with_tmp("y", "random-temp-name.txt") do |path|
       api, fake, = build_doc_api
       api.send_document(77, path, filename: "tengu-log-3.txt")
 
-      assert_equal "tengu-log-3.txt", fake.calls.fetch(0)[:params][:filename]
+      call = fake.calls.fetch(0)
+      assert_equal "tengu-log-3.txt", call[:document].original_filename
+      refute call[:params].key?(:filename), "filename 不是 Bot API 字段，不得塞进 params"
     end
   end
 
-  def test_filename_is_omitted_when_not_given
+  def test_filename_falls_back_to_file_basename
     with_tmp("y", "log3b.txt") do |path|
       api, fake, = build_doc_api
       api.send_document(77, path)
 
-      refute fake.calls.fetch(0)[:params].key?(:filename),
-             "不给 filename 时不许多塞参数（Telegram 用上传名兜底）"
+      assert_equal "log3b.txt", fake.calls.fetch(0)[:document].original_filename,
+                   "不给 filename 时取文件路径 basename"
+    end
+  end
+
+  def test_document_is_always_a_multipart_file_part
+    # kimi T3.5 评审必修 #1 的钉：faraday-multipart 只把 respond_to content_type
+    # 的值当文件部件；裸 File/IO 会让整请求落 urlencoded（Telegram 400）
+    Tempfile.create("tengu-pin") do |tf|
+      tf.write("x")
+      tf.rewind
+      api, fake, = build_doc_api
+      api.send_document(77, tf, filename: "a.json")
+
+      document = fake.calls.fetch(0)[:document]
+      assert_respond_to document, :content_type
+      assert_equal "application/json", document.content_type, "按扩展名给 content_type"
+      assert_equal "a.json", document.original_filename
     end
   end
 
@@ -253,9 +277,9 @@ class TestSendDocument < Minitest::Test
     with_tmp("z", "log4.txt") do |path|
       err = assert_raises(TelegramBot::SendError) { api.send_document(77, path) }
 
-      assert_match(/raw 通道暂不支持文件上传/, err.message)
-      assert_match(/T3\.5/, err.message, "错误文案须指明 multipart 的后置任务号")
-      assert_empty http.calls, "绝不允许把 File 塞进 JSON body 静默发出坏请求"
+      assert_match(/raw 通道不支持文件上传/, err.message)
+      assert_match(/JSON body/, err.message, "错误文案须指明降级失败的原因")
+      assert_empty http.calls, "绝不允许把文件塞进 JSON body 静默发出坏请求"
       assert_empty gem_like.documents, "白名单缺失 → gem 侧不应真的派发成功"
     end
   end

@@ -34,6 +34,7 @@
 require "json"
 require "httparty"
 require "telegram/bot"
+require "faraday/multipart" # send_document 的 FilePart（gem 也依赖它，显式声明）
 require_relative "config"
 
 module TelegramBot
@@ -265,25 +266,32 @@ module TelegramBot
     #
     # file 三形态的处理（**只认 String 才自己开文件**）：
     #   - String（路径）→ File.open(file, "rb")，由本方法负责 close；
-    #   - IO / Tempfile  → **原样透传**给 gem/faraday（multipart 直接读 fd）。
-    #     早期实现把 IO 也塞进 File.open：无 to_path 的 IO（IO.pipe 等）会
-    #     TypeError，而 File/Tempfile 被按路径重开，丢掉了 fd 语义
-    #     （已关闭/已 rewind 到别处的 fd 会被静默重读错内容）。
+    #   - IO / Tempfile  → **原样**包进 FilePart（不从路径重开，保住 fd 语义——
+    #     已关闭/已 rewind 到别处的 fd 会被重开静默重读错内容，T2.1 F2 纪律）。
     #   - 其他对象 → 交给 gem（它只 jsonify Hash/Array，其余原样传）。
     #
-    # filename 透传（T3.5 修复）：形参此前存在但从未进 params——Telegram 在
-    # 未给 filename 时按上传文件名的 basename 取名，于是「临时路径的随机名」
-    # 会原样出现在用户看到的文件上。T3.5 的 log 导出显式传 filename 保住
-    # `tengu-log-<id>.txt/json`；此处把这层透传补齐（发送侧文件名的唯一真相）。
+    # multipart 的硬事实（kimi T3.5 评审必修 #1）：faraday-multipart 只把
+    # **respond_to?(:content_type) 的值**当文件部件（middleware.rb 的
+    # has_multipart?）。裸 File/IO 不满足 → 整个请求落 urlencoded、
+    # document 变 inspect 字符串 → Telegram 400。所以这里必须包
+    # Faraday::Multipart::FilePart（= Multipart::Post::UploadIO）。
+    #
+    # 文件名（kimi T3.5 评审提案 #2）：Bot API 的 sendDocument **没有**
+    # filename 表单字段——往 params 塞它是被服务端忽略的额外表单项。
+    # 用户可见文件名的唯一真相 = FilePart 第三参（Content-Disposition 的
+    # filename）。不给 filename 时取文件路径 basename，无名 IO 兜底 "document"。
     def send_document(chat_id, file, thread_id: nil, caption: nil, filename: nil)
       @rate_limiter.wait(chat_id)
 
       opened = file.is_a?(String) ? File.open(file, "rb") : nil
-      document = opened || file
+      io = opened || file
+      base = filename
+      base ||= File.basename(io.path) if io.respond_to?(:path) && io.path
+      base ||= "document"
+      document = Faraday::Multipart::FilePart.new(io, document_content_type(base), base)
       params = { chat_id: chat_id, document: document }
       params[:caption] = caption if caption
       params[:message_thread_id] = thread_id if thread_id
-      params[:filename] = filename if filename
       params[:parse_mode] = @parse_mode if @parse_mode
 
       begin
@@ -291,11 +299,11 @@ module TelegramBot
       rescue NoMethodError => e
         raise unless gem_endpoint_missing?(e)
 
-        # raw 通道走的是 JSON body，**无法上传文件**（File/IO 塞进去只会得到
+        # raw 通道走的是 JSON body，**无法上传文件**（FilePart 塞进去只会得到
         # 一个坏请求）。与其静默发出必然失败的请求，不如明确报错。
         raise SendError,
-              "sendDocument 降级失败：raw 通道暂不支持文件上传" \
-              "（multipart 待 T3.5 实现）。gem 报端点缺失：#{e.name.inspect}"
+              "sendDocument 降级失败：raw 通道不支持文件上传" \
+              "（JSON body 无法承载文件）。gem 报端点缺失：#{e.name.inspect}"
       ensure
         # 只 close 本方法自己打开的 IO —— 调用方传进来的 IO 生命周期归调用方
         opened&.close
@@ -431,6 +439,15 @@ module TelegramBot
     end
 
     private
+
+    # 按扩展名给个像样 content_type（Telegram 预览用）；未知归 octet-stream
+    def document_content_type(name)
+      case File.extname(name.to_s).downcase
+      when ".txt" then "text/plain"
+      when ".json" then "application/json"
+      else "application/octet-stream"
+      end
+    end
 
     # 这个 NoMethodError 是不是"gem 白名单没收录该端点"的信号？
     #

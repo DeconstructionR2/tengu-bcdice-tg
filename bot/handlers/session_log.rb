@@ -232,7 +232,7 @@ module TelegramBot
         lines = []
         lines << "===== 跑团 log：#{log.name} ====="
         lines << "作用域：#{scope}"
-        lines << "时间段：#{log.created_at} ～ #{log.ended_at}"
+        lines << "时间段：#{log.created_at} ～ #{log.ended_at}（UTC）" # kimi T3.5 评审提案 #7：UTC 必须标注
         lines << "条目数：#{entries.size}"
         lines << "-----"
         entries.each do |entry|

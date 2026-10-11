@@ -415,8 +415,15 @@ class TestSecretDiceRouting < Minitest::Test
   def setup
     @conn = TenguDB::Connection.open(path: ":memory:")
     @store = TenguDB::Secrets.new(@conn)
+    # 录制探针（kimi T3.5 评审提案 #4 的钉）：只收 record_bot_output
+    @log_spy = Object.new
+    @log_spy.define_singleton_method(:record_bot_output) do |chat_id:, thread_id:, text:|
+      (@recorded ||= []) << { chat_id: chat_id, thread_id: thread_id, text: text }
+    end
+    @log_spy.define_singleton_method(:recorded) { @recorded ||= [] }
     @handler = TelegramBot::Handlers::SecretDiceHandler.new(
       settings: TenguDB::Settings.new(@conn), secrets: @store,
+      session_log: @log_spy,
       logger: Logger.new(IO::NULL)
     )
     @api, @fake, = build_api
@@ -642,5 +649,20 @@ class TestSecretDiceRouting < Minitest::Test
     assert_equal 1, plain_sends.size, "公开应发出一条普通消息"
     refute plain_sends.first.key?(:message_thread_id),
            "群级（0）公开不得带 message_thread_id 上 wire"
+  end
+
+  def test_public_reveal_is_recorded_as_bot_output
+    # kimi T3.5 评审提案 #4 的回归钉：公开路径自走 api.send_text、不到 router
+    # 挂钩②——handler 显式录，否则导出的跑团 log 缺这段群内公开内容
+    @router.dispatch(message_update(text: "/secret SB@6"))
+    record, = @store.latest_for(chat_id: CHAT_ID, user_id: USER)
+    revealed_text = record.result_text
+
+    @router.dispatch(callback_update(data: TenguDB::Secrets.callback_data(record.id)))
+
+    assert_equal 1, @log_spy.recorded.size, "公开的暗骰结果必须以 bot 输出落 log"
+    assert_equal revealed_text, @log_spy.recorded.first[:text],
+                 "录的是公开后的结果全文（此刻它已是群内公开消息）"
+    assert_equal CHAT_ID, @log_spy.recorded.first[:chat_id]
   end
 end

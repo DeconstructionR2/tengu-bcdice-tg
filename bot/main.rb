@@ -176,9 +176,8 @@ dice = TelegramBot::Handlers::DiceHandler.new(settings: settings)
 # 纪律，§3 决9）——Secrets 只新建一个对象，但底层句柄是同一个。
 # 注意 Secrets 的 TTL 清理走「每次写入顺手删」，故它本身不持有常驻资源。
 secrets_store = TenguDB::Secrets.new(dice_db)
-secret_dice = TelegramBot::Handlers::SecretDiceHandler.new(
-  settings: settings, secrets: secrets_store
-)
+# secret_dice 的构造挪到 session_log_recorder 之后（见下方 T3.5 段）——
+# 公开按钮路径要注入录制器（kimi T3.5 评审提案 #4）。
 
 # T2.6：管理员助手（getChatMember 的唯一实现）。**只构造一个实例**并注入
 # SettingsHandler —— 缓存要跨消息复用，handler 各建一个就等于没有缓存。
@@ -212,6 +211,14 @@ session_log_handler = TelegramBot::Handlers::SessionLogHandler.new(
 session_log_recorder = TelegramBot::SessionLogRecorder.new(
   session_logs: session_logs_store, enabled: logging_enabled,
   bot_name: bot_username || "骰子bot"
+)
+
+# T3.1：暗骰 handler 在 recorder 之后构造——「公开」按钮把结果发成群内公开
+# 消息的路径要进 log（自走 api.send_text 不到 router 挂钩②，由 handler 显式
+# 录；录的是已公开内容，符合 R8 口径。kimi T3.5 评审提案 #4）
+secret_dice = TelegramBot::Handlers::SecretDiceHandler.new(
+  settings: settings, secrets: secrets_store,
+  session_log: session_log_recorder
 )
 
 router = TelegramBot::Router.new(

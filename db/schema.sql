@@ -108,9 +108,11 @@ CREATE TABLE IF NOT EXISTS log_entries (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_log_entries_log ON log_entries(log_id, seq);
+-- 录制热路径：每条入站消息一次 recording_for 查询（kimi T3.5 评审提案 #6）
+CREATE INDEX IF NOT EXISTS idx_session_logs_scope ON session_logs(chat_id, thread_id, status);
 
 -- ============================================================================
--- 索引（除 log_entries 那条外，按 T2.4 的实际访问模式补）
+-- 索引（除 log_entries 与 session_logs 两条外，按 T2.4 的实际访问模式补）
 --
 -- 为什么不逐表补索引而只在必要处补：
 --   - chat_settings / bank_record：主键 (chat_id, thread_id) 前缀已覆盖
