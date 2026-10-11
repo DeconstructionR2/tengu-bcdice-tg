@@ -65,6 +65,29 @@ def check_plugin_registration
   # 每加一个前缀**必须**同步（kimi-code T1.3 评审提醒）。
   ex_added = %w[NSRS SBX WSX KRS KRZ KRA KRO KRY NJI NJS NJN NJK NJC NJB SEISEN]
 
+  # T1.7：1版 NinjaSlayerEx 的对应登记（**另一套前缀，不与上面混为一谈**）。
+  #
+  # 单列而非并入 ex_added：两者的父类不同（1版 NinjaSlayer 只注册
+  # NJ/EV/AT/EL/SB，2版是 UH/[KENHU]/SB/WS/WSE/NRS），
+  # 「父类前缀是否为子类前缀的前缀序列」这条断言对两者的含义也不同。
+  parent_prefixes1 = BCDice::GameSystem::NinjaSlayer.prefixes
+  ex_prefixes1 = BCDice::GameSystem::NinjaSlayerEx.prefixes
+  inherited_ok1 = ex_prefixes1[0, parent_prefixes1.size] == parent_prefixes1
+  # T1.7 一次注册全部 9 个（时序铁律：必须全部在类体内完成）。
+  ex1_added = %w[WS JITSB DKKI KRM CYBER BIOCYBER SOUL SUMMON BK]
+
+  results << ["① NinjaSlayerEx < NinjaSlayer（1版子类关系）",
+              BCDice::GameSystem::NinjaSlayerEx < BCDice::GameSystem::NinjaSlayer,
+              "ancestors include? #{BCDice::GameSystem::NinjaSlayerEx.ancestors.include?(BCDice::GameSystem::NinjaSlayer)}"]
+
+  results << ["① NinjaSlayerEx prefixes 含父类全量前缀且 9 个新表前缀已注册（T1.7）",
+              BCDice::GameSystem::NinjaSlayer == BCDice::GameSystem::NinjaSlayerEx.superclass &&
+                inherited_ok1 &&
+                (ex1_added - ex_prefixes1).empty?,
+              "ex1.prefixes=#{ex_prefixes1.inspect} " \
+              "vs ns1.prefixes=#{parent_prefixes1.inspect} " \
+              "（inherited=#{inherited_ok1}, missing_added=#{(ex1_added - ex_prefixes1).inspect}）"]
+
   results << ["① prefixes 含父类全量前缀且新增前缀已注册（父类前缀为子类前缀的前缀序列；regex 门槛由 runner command_pattern 断言覆盖）",
               BCDice::GameSystem::NinjaSlayer2 == BCDice::GameSystem::NinjaSlayer2Ex.superclass &&
                 inherited_ok &&

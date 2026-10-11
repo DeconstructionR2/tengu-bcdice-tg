@@ -208,4 +208,167 @@ class TestLedgerConsistency < Test::Unit::TestCase
     assert_equal(wasshoi.fetch("failure_word"), yml_judge[:failure_word],
                  "SEISEN failure_word 与 JSON 不一致")
   end
+
+  # ==========================================================================
+  # T1.7：1版 9 表 —— 骨架选型 / min_index / 别名收敛 / 骰型（**逐表钉死**）
+  #
+  # 本组是 T1.7 的常驻守卫，与 scripts/gen_table_toml.rb §4 的 T1.7 段
+  # **互为补充**：生成器只在重生成时跑，本文件每次 `rake test` 都跑。
+  # ==========================================================================
+  KLASS1 = BCDice.game_system_class("NinjaSlayerEx")
+
+  # T1.7 的 9 张 1版表（顺序 = yml / ledger 顺序）。
+  EDITION1_KEYS = %w[WS JITSB DKKI KRM CYBER BIOCYBER SOUL SUMMON BK].freeze
+
+  # 逐表登记的期望值（**独立于 ledger 的第二份抄本**）。
+  #
+  # 为什么要独立抄一份而不是只读 ledger：三方交叉校验（ledger ↔ 代码 ↔ yml）
+  # 能证明三者**互相一致**，但不能证明它们**同时错**——若有人把 ledger 的
+  # min_index 从 2 改成 1 并同步改了代码，交叉校验仍全绿，
+  # 而 CYBER 会静默错位一格。这里把「CYBER/SUMMON 的 min_index 是 2」
+  # 作为**独立事实**写进测试常量，与实现逐条对拍。
+  #
+  # 数据源：references/extracted/i18n_key_ledger.yml 的 min_index 字段
+  #         （由 extract_tengu_data.mjs 从天狗 data 的**实际键**推出，
+  #          不是人工填的——故它与「天狗 data 键范围」是同一个事实的两个视角）。
+  EDITION1_EXPECTED_MIN_INDEX = {
+    "WS" => 1, "JITSB" => 1, "DKKI" => 1, "KRM" => 1,
+    "CYBER" => 2,          # 2D6 表 → data 键 2..12
+    "BIOCYBER" => 1, "SOUL" => 1,
+    "SUMMON" => 2,         # 2D6 表 → data 键 2..12
+    "BK" => 1
+  }.freeze
+
+  # 每张表**全部**骰型后缀 → 骰型（别名收敛后的形态）。
+  #
+  # 关键语义：`_X` 后缀是**按唯一骰型去重**的结果，不是天狗别名字典的搬运。
+  #   JITSB 的天狗字典有 10 个键，但只有 2 个唯一骰型（1d6 / 1d6+1）；
+  #   KRM 有 13 个键，但只有 3 个（1d6 / 1d6+1 / 2d6）。
+  #   **KRM 不提供 `_D`**：天狗的 `,D` 实为 `1d6`，与 `,A` 同骰，
+  #   提供它等于凭空多一个与 `_A` 无差别的可选项。
+  EDITION1_EXPECTED_DICE = {
+    "WS" => { "A" => "1D6" },
+    "JITSB" => { "A" => "1D6", "B" => "1D6+1" },
+    "DKKI" => { "A" => "1D6" },
+    "KRM" => { "A" => "1D6", "B" => "1D6+1", "C" => "2D6" },
+    "CYBER" => { "A" => "2D6" },
+    "BIOCYBER" => { "A" => "1D6" },
+    "SOUL" => { "A" => "1D6" },
+    "SUMMON" => { "A" => "2D6" },
+    "BK" => { "A" => "1D36" }
+  }.freeze
+
+  def test_edition1_registered_tables_match
+    assert_equal(EDITION1_KEYS, KLASS1::EDITION1_TABLES.to_a,
+                 "NinjaSlayerEx 登记的表清单与 T1.7 清单不一致")
+  end
+
+  # ① **骨架选型 ⟺ ledger 的 datarange 有无**（T1.7 拍板的核心不变量）。
+  #    9 表全部 :no_clamp ——一旦有人给某表加 datarange 或加钳制常量，当场红。
+  def test_edition1_skeletons_are_all_no_clamp
+    EDITION1_KEYS.each do |key|
+      assert_equal(:no_clamp, KLASS1::EDITION1_SKELETONS[key],
+                   "#{key} 骨架选型应为 :no_clamp（1版 9 表的 dice 字面量均无 \"+x\"，" \
+                   "天狗 isTableAdditionValue 不置位 → 恒走 data[出目]，无钳制）")
+      assert_nil(entry(key)["datarange"],
+                 "#{key} ledger datarange 应为 nil；若确需钳制，说明该表已不是纯查表语义")
+    end
+  end
+
+  # ② **min_index 逐表正确**（含 CYBER/SUMMON 的 2 —— 2版 的「恒为 1」经验在这里会错位）
+  def test_edition1_min_index_per_table
+    EDITION1_KEYS.each do |key|
+      assert_equal(EDITION1_EXPECTED_MIN_INDEX.fetch(key), KLASS1::EDITION1_MIN_INDEX[key],
+                   "#{key} 的 min_index 应为 #{EDITION1_EXPECTED_MIN_INDEX[key]}")
+      assert_equal(EDITION1_EXPECTED_MIN_INDEX.fetch(key), entry(key)["min_index"],
+                   "#{key} ledger min_index 与独立抄本不一致")
+    end
+  end
+
+  # ③ **别名收敛后的骰型集 == 天狗别名字典按表达式去重的唯一值集**
+  #    （ledger ↔ 代码）：多一个 = 凭空多出无差别选项；少一个 = 漏实现可达出目。
+  def test_edition1_dice_types_match_deduplicated_ledger
+    EDITION1_KEYS.each do |key|
+      impl = KLASS1::EDITION1_DICE_TYPES[key]
+      assert_not_nil(impl, "#{key} 在 EDITION1_DICE_TYPES 中缺失")
+
+      # 期望（独立抄本）
+      want = EDITION1_EXPECTED_DICE.fetch(key)
+      assert_equal(want.keys.sort, impl.keys.map(&:to_s).sort,
+                   "#{key} 骰型后缀集不一致：期望 #{want.keys.sort}，实得 #{impl.keys.sort}")
+      want.each do |suffix, expr|
+        assert_equal(expr, impl[suffix][:expr], "#{key}_#{suffix} 骰型应为 #{expr}")
+      end
+
+      # ledger 侧：按表达式去重后的唯一集必须与代码**完全相等**
+      ledger_exprs = entry(key)["dice"].values.map { |v| normalize_1_dice_expr(v) }.uniq.sort
+      code_exprs = impl.values.map { |s| s[:expr].downcase.strip }.uniq.sort
+      assert_equal(ledger_exprs, code_exprs,
+                   "#{key} 别名收敛后的骰型集与 ledger 不一致：" \
+                   "天狗 #{entry(key)['dice'].size} 个别名去重后应为 #{ledger_exprs.inspect}")
+    end
+  end
+
+  # ④ **同骰的别名不得被实现成两个后缀**（KRM 的 `,D` 实为 1d6）。
+  #    这条是「不提供 `_D`」这一拍板的守卫：若有人把天狗的 13 个别名
+  #    逐个搬成后缀，`_A` 与 `_D` 会变成两个完全同骰的选项。
+  def test_edition1_no_duplicate_dice_suffixes
+    EDITION1_KEYS.each do |key|
+      by_expr = KLASS1::EDITION1_DICE_TYPES[key].group_by { |_, s| s[:expr] }
+      dups = by_expr.select { |_, v| v.size > 1 }.keys
+      assert_empty(dups, "#{key} 存在同骰的重复后缀 #{dups.inspect}（应按唯一骰型去重）")
+    end
+  end
+
+  # ⑤ **无钳制 ⇒ 每个骰型的可达域必须 ⊆ 表跨度**
+  #    （否则那部分出目恒不响应 = 规格漂移的静默信号）。
+  def test_edition1_reachable_domain_within_table_span
+    EDITION1_KEYS.each do |key|
+      min_i = KLASS1::EDITION1_MIN_INDEX.fetch(key)
+      items = I18n.t("NinjaSlayerEx.table.#{key}.items", locale: :ja_jp, raise: true)
+      max_i = min_i + items.length - 1
+
+      # yml items 数 == ledger item_count == data_index 跨度
+      assert_equal(entry(key)["item_count"], items.length, "#{key} yml items 数与 ledger item_count 不符")
+      assert_equal(entry(key)["max_index"] - entry(key)["min_index"] + 1, items.length,
+                   "#{key} yml items 数与 data_index 跨度不符")
+
+      KLASS1::EDITION1_DICE_TYPES[key].each do |suffix, spec|
+        lo = spec[:times] + spec[:bonus]
+        hi = spec[:times] * spec[:sides] + spec[:bonus]
+        assert_operator(lo, :>=, min_i,
+                        "#{key}_#{suffix} 可达域下界 #{lo} < 表下界 #{min_i}（越界即不响应）")
+        assert_operator(hi, :<=, max_i,
+                        "#{key}_#{suffix} 可达域上界 #{hi} > 表上界 #{max_i}（越界即不响应）")
+      end
+    end
+  end
+
+  # ⑥ BK 是 **单颗 36 面**（T1.5 已实证的 d36 结论在 1版 侧的复钉）。
+  #    若有人按 D66 实现，times 会变 2 而当场红。
+  def test_edition1_d36_is_single_36_sided_die
+    spec = KLASS1::EDITION1_DICE_TYPES.fetch("BK").fetch("A")
+    assert_equal(1, spec[:times], "BK 应是**单颗**骰（D36 非 D66）")
+    assert_equal(36, spec[:sides], "BK sides 应为 36")
+    assert_equal("1d36", entry("BK")["dice"]["a"].downcase, "BK ledger dice.a 应为 1d36")
+  end
+
+  # ⑦ **9 个前缀已注册**，且与父类前缀无遮蔽（遮蔽会改变 prefixes_pattern 的命中顺序）
+  def test_edition1_prefixes_registered_and_unshadowed
+    parent = KLASS1.superclass.prefixes
+    added = KLASS1.prefixes - parent
+    assert_equal(EDITION1_KEYS, added,
+                 "NinjaSlayerEx 相对父类新增的前缀应恰为 T1.7 的 9 个表键")
+
+    added.combination(2) do |a, b|
+      assert_not_equal(b[0, a.length], a, "新增前缀 #{a} 遮蔽了 #{b}（必须两两无前缀关系）")
+    end
+  end
+
+  # 天狗骰型字面量 → 归一化的 "<times>d<sides>[+<bonus>]"（与 gen_table_toml 同解）。
+  def normalize_1_dice_expr(raw)
+    s = raw.to_s.downcase.gsub("+x", "").strip
+    s = "1#{s}" if s.start_with?("d")
+    s
+  end
 end

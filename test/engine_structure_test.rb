@@ -19,6 +19,23 @@
 #   4. RE_EX_APPENDIX_ONE / RE_EX_DICEROLL 结构断言（判定符集合与父类同源、
 #      y 形态与父类同源、记忆符字母表封闭）—— 防止日后单边漂移；
 #   5. 天狗对拍：记忆符 [J]/[L] 的边界与标签必须逐字等于天狗 appTransration 的值。
+#
+# T1.7 为 1版 NinjaSlayerEx 也加了一组**独立**的 prefixes_pattern 覆写，
+# 且形态与 2版**刻意不同**：
+#   1版：`\A(S)?(<全部前缀，长度降序>)`
+#   2版：`\A(?:<S 前缀降序>|^(S)?(<全部前缀>))`
+# 原因是 1版 父类**没有** `[KENHU]` 字符类、且 14 个前缀两两无遮蔽
+# （2版 的 SEISEN 阻塞 bug 正是「`[KENHU]` 字符类 + `(S)?` 回溯」所致）。
+# 把 2版 形态套到 1版 前缀上会让保护分支抢在 `(S)?` 之前命中 `SB`，
+# **回归掉合法暗骰 `SBK` / `SBIOCYBER`**（穷举实测 3 条）。
+#
+# 故本文件新增第 6~8 组断言覆盖 1版 侧：
+#   6. 1版 prefixes_pattern 覆写的结构形态（**通式**，非硬编码前缀名）
+#   7. 1版 的 secret parity 样本（**按 1版 自己的前缀重建**——
+#      照抄 2版 样本会是**假绿**：1版 无 WS/WSE/NRS/UH/[KENHU]，
+#      样本两边都匹配不上，assert_equal(nil, nil) 恒过）
+#   8. 1版 前缀降序覆写与**引擎原生 pattern 的行为等价性**（穷举探针）——
+#      证明它是行为中性的预防性覆写，而非引入了行为漂移
 # ============================================================================
 
 require "test/unit"
@@ -183,5 +200,199 @@ class TestEngineStructure < Test::Unit::TestCase
     # 只给 1 颗骰：若实现先掷骰再判非法，这里会抛 "@rands is empty!"。
     inst.randomizer = RandomizerMock.new([[1, 6]])
     assert_nil(inst.eval, "超上界倍率必须整条不响应")
+  end
+
+  # ==========================================================================
+  # 6~8. T1.7：1版 NinjaSlayerEx 的 prefixes_pattern 覆写 + secret parity
+  # ==========================================================================
+  EX1 = BCDice::GameSystem::NinjaSlayerEx
+  PARENT1 = BCDice::GameSystem::NinjaSlayer
+
+  # T1.7 的 9 张表新增前缀
+  EDITION1_PREFIXES = %w[WS JITSB DKKI KRM CYBER BIOCYBER SOUL SUMMON BK].freeze
+
+  # 1版 的 secret parity 样本 = **1版 实际存在的**前缀（父类 5 个 + 新增 9 个）。
+  #
+  # 为何 1版 侧不需要「S 前缀保护」（与 2版的差异根源）：
+  #   2版 SEISEN 阻塞 bug 源于 `[KENHU]` 这个**字面量被当作字符类**——
+  #   `SEISEN9` 的 S 被 `(S)?` 吃掉后剩 `EISEN9`，其 E 命中 `[KENHU]` 字符类。
+  #   1版 父类**没有** `[KENHU]`，且 14 个前缀两两无遮蔽
+  #   （无一是另一的前缀），`(S)?` 吃掉首字母 S 后剩余串必然不匹配任何前缀
+  #   → 回溯让 `(S)?` 匹配空 → 命令正常命中。故 1版 **不复现**该 bug，
+  #   只需保留 `(S)?` 分组 + 降序排列即可（第 8 组断言证明行为等价）。
+  EDITION1_SECRET_SAMPLES = %w[NJ EV AT EL SB WS JITSB DKKI KRM CYBER BIOCYBER SOUL SUMMON BK].freeze
+
+  def test_edition1_prefixes_pattern_override_structure
+    # R1 守卫的**参考产物**：父类自己的 prefixes_pattern。
+    # 上游 base.rb 若改 pattern 的锚点/分组/flag（如从 `^(S)?(...)` 改成别的形态），
+    # 这条断言当场红——而不变的话，Ex 的覆写会**静默**与上游语义脱钩
+    # （比如上游若把 `(S)?` 改成 `(s)?i` 或加了 \\A 锚点，
+    #   Ex 仍按旧假设拼装 → 暗骰捕获行为悄悄变）。
+    ref = PARENT1.prefixes_pattern
+
+    # **通式**断言：降序前缀 + 保留 `(S)?` 捕获组。
+    # 与 2版 形态的差异（不写保护分支、不丢 `(S)?`）是**刻意**的，
+    # 不是笔误——理由见文件头注释与 test_edition1_prefixes_pattern_is_behaviour_neutral。
+    want = "\\A(S)?(?:#{EX1.prefixes_desc.join('|')})"
+    assert_equal(want.b, EX1.prefixes_pattern.source.b,
+                 "NinjaSlayerEx.prefixes_pattern 结构漂移（上游升级或覆写被破坏）")
+    # 父类原生 pattern 仍应是 `(S)?(前缀表)` 形态——若上游改了，这条会红
+    assert_equal("^(S)?(#{PARENT1.prefixes.join('|')})".b, ref.source.b,
+                 "父类 prefixes_pattern 的形态变了（R1 守卫）")
+    assert_predicate(EX1.prefixes_pattern, :casefold?, "IGNORECASE flag 缺失")
+    assert_predicate(EX1.prefixes_pattern, :frozen?)
+    assert_predicate(EX1.prefixes_desc, :frozen?, "prefixes_desc 必须冻结（时序铁律）")
+
+    # 降序：长度相同时保持注册顺序（稳定排序，使 source 逐字节可复现）
+    lengths = EX1.prefixes_desc.map(&:length)
+    assert_equal(lengths.sort.reverse, lengths,
+                 "1版 前缀必须按长度降序排列（否则短前缀先命中，吃掉长前缀）")
+  end
+
+  def test_edition1_secret_parity_with_parent
+    EDITION1_SECRET_SAMPLES.each do |prefix|
+      ["#{prefix}", "S#{prefix}"].each do |input|
+        # 只对**父类也存在**的前缀比对「与父类逐字节一致」：
+        # 新增前缀（WS/JITSB/…）在父类里本就不匹配，比对会得到
+        # nil vs "WS" 的假差异——那是**预期**的注册差异，不是漂移。
+        next unless PARENT1.prefixes.include?(prefix)
+
+        m_ex = EX1.prefixes_pattern.match(input)
+        m_pa = PARENT1.prefixes_pattern.match(input)
+        assert_equal(m_pa && m_pa[1], m_ex && m_ex[1],
+                     "1版 secret 捕获不一致 @ #{input.inspect}" \
+                     "（父 #{m_pa && m_pa[1].inspect} vs Ex #{m_ex && m_ex[1].inspect}）")
+      end
+    end
+
+    # 新增前缀的自身语义：裸输入不是暗骰，S 前缀输入才是。
+    EDITION1_PREFIXES.each do |prefix|
+      m_bare = EX1.prefixes_pattern.match(prefix)
+      assert_nil(m_bare && m_bare[1], "#{prefix}（裸）不应被判为暗骰")
+      m_s = EX1.prefixes_pattern.match("S#{prefix}")
+      assert_equal("S", m_s && m_s[1], "S#{prefix} 应是暗骰（S 被 (S)? 吃掉）")
+    end
+
+    # **S 开头的表前缀不得被 `(S)?` 吃掉首字母后失配**（2版 SEISEN bug 的 1版 对照组）
+    %w[SOUL SUMMON].each do |prefix|
+      m = EX1.prefixes_pattern.match(prefix)
+      assert_not_nil(m, "#{prefix} 必须命中前缀（1版 无 [KENHU]，不应复现 2版 的阻塞 bug）")
+      assert_nil(m[1], "#{prefix} 首字母 S 不应被当作暗骰标记吃掉")
+    end
+  end
+
+  # **穷举等价性**：本覆写与「未覆写的引擎原生 pattern」行为必须完全一致。
+  #
+  # 这是 T1.7 覆写的**核心价值证明**：它当前是**行为中性的预防性覆写**
+  # （1版 无 [KENHU]、无前缀遮蔽 → 2版 的 bug 不复现），
+  # 价值在于「日后注册新前缀时不依赖 alternation 顺序恰好正确」。
+  # 若此断言失败 = 覆写引入了行为漂移（比不改更糟），必须当场红。
+  def test_edition1_prefixes_pattern_is_behaviour_neutral
+    native = Regexp.new("^(S)?(#{EX1.prefixes.join('|')})", Regexp::IGNORECASE)
+
+    # 候选集用**生成式**而非手写清单：前缀 × {裸 / S / SS} × 后缀形态。
+    #
+    # 初版这里手写了 30 来条，实测（攻击实验）真正被 2版形态破坏的是 **44 条**，
+    # 手写清单只覆盖到其中一小部分——穷举强度不够的断言等于半盲。
+    # 生成式覆盖 928 条候选，任何前缀集合变化都自动跟着变。
+    suffixes = %w[
+      _ _A _B _C _D @ @0 @1 @2 @6 @12 @36 @99 @03
+      Q X 6 x x_ _@3 _A@1
+    ] + [""]
+    candidates = []
+    EX1.prefixes.each do |prefix|
+      ["", "S", "SS"].each do |lead|
+        suffixes.each { |suffix| candidates << "#{lead}#{prefix}#{suffix}" }
+      end
+    end
+    # 另加几条**不属于任何前缀**的畸形串（验证「不该命中就不命中」）
+    candidates += %w[QQQ SEISEN9 SEISEN SWSQ SBKX SSOULX BKK WS@ WS_ BK]
+    candidates.uniq!
+    assert_operator(candidates.size, :>=, 500,
+                    "候选集退化了（#{candidates.size} 条）；穷举强度不足时本断言接近半盲")
+
+    diffs = candidates.reject do |c|
+      a = native.match(c)
+      b = EX1.prefixes_pattern.match(c)
+      ta = a ? [a[1], c[a.end(0)..]] : nil
+      tb = b ? [b[1], c[b.end(0)..]] : nil
+      ta == tb
+    end
+    assert_empty(diffs,
+                 "1版 prefixes_pattern 覆写与引擎原生 pattern 行为不一致：#{diffs.inspect}" \
+                 "（覆写引入了行为漂移，必须当场红）")
+  end
+
+  # **反向对照**：证明「照抄 2版 的 S 前缀保护形态」在 1版 上是**错的**。
+  #
+  # 这是本组断言里最重要的一条：它把「为什么 1版 不采用 2版 形态」
+  # 从注释升级为**可执行的事实**。若没有它，后人看到两版 Ex 类形态不一致，
+  # 极可能「统一风格」把 1版 改成 2版 形态——而那会静默回归掉
+  # 44 条合法暗骰命令（实测 SBIOCYBER_ / SBK / SBKX … 全被截成 IO 前缀）。
+  #
+  # 反向逻辑：2版 形态把「保护分支」放在 `(S)?` **之前**，于是 `SBIOCYBER`
+  # 先命中保护分支的 `SB` → 剩 `IOCYBER` → 命令失配 → 合法暗骰静默失效。
+  # 1版 无 `[KENHU]`、无前缀遮蔽，故根本不需要这个保护分支。
+  def test_edition1_two_version_form_would_regress_secret_commands
+    s_prefixes = EX1.prefixes.grep(/\A[Ss]/)
+    protected = Regexp.new(
+      "\\A(?:#{s_prefixes.sort_by { |p| [-p.length, p] }.join('|')}" \
+      "|^(S)?(#{EX1.prefixes.join('|')}))",
+      Regexp::IGNORECASE
+    )
+
+    # 构造**真实受影响**的样本：`S` + 某个**非 S 开头**的前缀 + 后缀。
+    #
+    # ⚠ 受影响集合的精确刻画（初版两次踩坑后才定准，务必读懂再改）：
+    #   2版 形态的保护分支 `\A(?:SUMMON|SOUL|SB|...)` 排在 `(S)?` **之前**。
+    #   命令 `S{prefix}…` 会先被保护分支试匹配，只有当字符串 **`S{prefix}` 本身
+    #   以某个 S 前缀开头** 时才命中保护分支并留下错误残串。
+    #     · `SBK`     → `SBK` 以 `SB` 开头  → 保护分支吃掉 `SB`，剩 `K`  → 失配 ✗
+    #     · `SBIOCYBER` → 以 `SB` 开头        → 剩 `IOCYBER`            → 失配 ✗
+    #     · `SNJ4`    → `SNJ4` 不以任何 S 前缀开头 → 保护分支不命中，
+    #                    回溯到 `(S)?` 分支，行为与原生一致 → 不构成回归 ✓
+    #   所以风险集 = { 非 S 前缀 q | ("S"+q) 以某个 S 前缀开头 }，
+    #   1版 实测恰好 = [BIOCYBER, BK]（因 1版 只有 SB/SOUL/SUMMON 三个 S 前缀）。
+    #   「S + S 前缀」本身**不**受影响（两条路径都判 secret，结果一致）。
+    risky = EX1.prefixes.reject { |q| q.match?(/\A[Ss]/) }
+                       .select { |q| s_prefixes.any? { |s| "S#{q}".start_with?(s) } }
+    assert_include(risky, "BIOCYBER", "BIOCYBER 以 SB 开头，必须是本对照的风险样本之一")
+    assert_include(risky, "BK", "BK 与 SB 构成 SBK，必须是本对照的风险样本之一")
+
+    affected = risky.flat_map do |prefix|
+      ["", "_", "_A", "@", "@1", "@36"].map { |suffix| "S#{prefix}#{suffix}" }
+    end
+    assert_operator(affected.size, :>=, 12,
+                    "受影响样本退化了（#{affected.size} 条）；前缀集合变了需重估")
+
+    regressions = affected.reject do |c|
+      a = native_edition1_pattern.match(c)
+      b = protected.match(c)
+      ta = a ? [a[1], c[a.end(0)..]] : nil
+      tb = b ? [b[1], c[b.end(0)..]] : nil
+      ta == tb
+    end
+
+    # 实测：2 个风险前缀 × 6 个后缀 = 12 条候选，**全部**回归。
+    assert_equal(affected.size, regressions.size,
+                 "2版 形态的回归样本只有 #{regressions.size}/#{affected.size} 条（预期全部）：" \
+                 "若此变红，说明 2版 的 prefixes_pattern 语义变了，1版 的形态选择需要重评")
+
+    # 逐条确认「原生能捕获 secret、2版 形态留下错误残串」——这是回归的实际后果。
+    regressions.each do |c|
+      a = native_edition1_pattern.match(c)
+      assert_equal("S", a && a[1], "#{c}: 引擎原生 pattern 下应是暗骰")
+
+      b = protected.match(c)
+      rest2 = c[(b && b[1] ? 1 : 0) + b[2].to_s.size..]
+      assert_not_equal(rest2, c[1..],
+                       "#{c}: 2版 形态下剩余串被改写成 #{rest2.inspect}" \
+                       "——这正是它不可用于 1版 的原因")
+    end
+  end
+
+  # 引擎原生 pattern（1版，未加任何覆写）的参照物。
+  def native_edition1_pattern
+    Regexp.new("^(S)?(#{EX1.prefixes.join('|')})", Regexp::IGNORECASE)
   end
 end
