@@ -60,9 +60,10 @@ def check_plugin_registration
   parent_prefixes = BCDice::GameSystem::NinjaSlayer2.prefixes
   ex_prefixes = BCDice::GameSystem::NinjaSlayer2Ex.prefixes
   inherited_ok = ex_prefixes[0, parent_prefixes.size] == parent_prefixes
-  # T1.4 追加 5 派阀前缀——此清单是「本扩展主动注册了什么」的硬编码登记，
+  # T1.4 追加 5 派阀前缀、T1.5 再追加 6 キャラメイク表 + 聖戦——
+  # 此清单是「本扩展主动注册了什么」的硬编码登记，
   # 每加一个前缀**必须**同步（kimi-code T1.3 评审提醒）。
-  ex_added = %w[NSRS SBX WSX KRS KRZ KRA KRO KRY]
+  ex_added = %w[NSRS SBX WSX KRS KRZ KRA KRO KRY NJI NJS NJN NJK NJC NJB SEISEN]
 
   results << ["① prefixes 含父类全量前缀且新增前缀已注册（父类前缀为子类前缀的前缀序列；regex 门槛由 runner command_pattern 断言覆盖）",
               BCDice::GameSystem::NinjaSlayer2 == BCDice::GameSystem::NinjaSlayer2Ex.superclass &&

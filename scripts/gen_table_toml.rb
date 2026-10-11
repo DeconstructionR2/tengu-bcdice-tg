@@ -34,6 +34,7 @@
 # ============================================================================
 
 require "yaml"
+require "json"
 require "optparse"
 require "fileutils"
 
@@ -46,17 +47,23 @@ DEFAULT_TARGET = File.join(ROOT, "test/data/NinjaSlayer2Ex.toml")
 # T1.4 的 5 张カルマロンダリング表（ledger ascii_key）。顺序固定 = yml 顺序。
 DEFAULT_TABLES = %w[KRS KRZ KRA KRO KRY].freeze
 
+# T1.5 的 6 张キャラメイク表（ledger ascii_key，顺序 = yml 顺序）。
+CHARAMAKE_TABLES = %w[NJI NJS NJN NJK NJC NJB].freeze
+
+# --tables 可选的表全集（T1.4 卡尔马 + T1.5 キャラメイク）。
+ALL_TABLES = (DEFAULT_TABLES + CHARAMAKE_TABLES).freeze
+
 # 本批表所属的游戏系统 ID（写入每条用例的 game_system 字段）
 GAME_SYSTEM_ID = "NinjaSlayer2Ex"
 
 options = {
-  tables: DEFAULT_TABLES,
+  tables: ALL_TABLES,
   check_only: false,
   target: DEFAULT_TARGET
 }
 OptionParser.new do |o|
   o.banner = "用法: bundle exec ruby scripts/gen_table_toml.rb [选项]"
-  o.on("--tables K1,K2", "逗号分隔的表 ASCII 键（默认 KRS,KRZ,KRA,KRO,KRY）") { |v| options[:tables] = v.split(",").map(&:strip) }
+  o.on("--tables K1,K2", "逗号分隔的表 ASCII 键（默认全集：卡尔马 5 + キャラメイク 6）") { |v| options[:tables] = v.split(",").map(&:strip) }
   o.on("--check", "只做三方交叉校验并预览用例数，不写盘") { options[:check_only] = true }
   o.on("--target-file PATH", "目标 toml（默认 test/data/NinjaSlayer2Ex.toml）") { |v| options[:target] = File.expand_path(v) }
 end.parse!
@@ -104,6 +111,27 @@ LEDGER_BY_KEY = LEDGER["entries"].each_with_object({}) { |e, h| h[e["ascii_key"]
 MIN_INDEX = KARMAROND_KEYS.map { |k| LEDGER_BY_KEY.fetch(k)["min_index"] }.uniq
 abort_with("五表 min_index 不唯一（应恒为 1）：#{MIN_INDEX.inspect}") unless MIN_INDEX == [1]
 abort_with("代码侧 min_index 与 ledger 不一致：#{CODE_MIN_INDEX}") unless CODE_MIN_INDEX == 1
+
+# ---------------------------------------------------------------------------
+# 2b. T1.5：キャラメイク 6 表 + 定値表示 + 聖戦判定
+#
+#     与 §2 的卡尔马同样「代码侧读常量、台账侧读 ledger」，不另抄一份。
+# ---------------------------------------------------------------------------
+abort_with("#{KLASS} 缺 CHARAMAKE_DICE_TYPES") unless KLASS.const_defined?(:CHARAMAKE_DICE_TYPES)
+abort_with("#{KLASS} 缺 CHARAMAKE_TABLE_MIN_INDEX") unless KLASS.const_defined?(:CHARAMAKE_TABLE_MIN_INDEX)
+abort_with("#{KLASS} 缺 SEISEN_DICE_TIMES/SIDES") unless KLASS.const_defined?(:SEISEN_DICE_TIMES)
+
+CODE_CHARAMAKE = KLASS::CHARAMAKE_DICE_TYPES
+CODE_CHARAMAKE_MIN_INDEX = KLASS::CHARAMAKE_TABLE_MIN_INDEX
+CODE_SEISEN_TIMES = KLASS::SEISEN_DICE_TIMES
+CODE_SEISEN_SIDES = KLASS::SEISEN_DICE_SIDES
+
+abort_with("六表 min_index 不唯一（应恒为 1）：#{CHARAMAKE_TABLES.map { |k| LEDGER_BY_KEY[k]['min_index'] }.uniq.inspect}") \
+  unless CHARAMAKE_TABLES.map { |k| LEDGER_BY_KEY[k]["min_index"] }.uniq == [1]
+abort_with("代码侧 CHARAMAKE_TABLE_MIN_INDEX 与 ledger 不一致：#{CODE_CHARAMAKE_MIN_INDEX}") unless CODE_CHARAMAKE_MIN_INDEX == 1
+
+# 聖戦判定的骰型与判定式——从 JSON 的 wasshoi 段实读，不写死。
+SEISEN_JSON = JSON.parse(File.read(File.join(ROOT, "references/extracted/tengu_tables.json"), encoding: "UTF-8"))["wasshoi"]
 
 # ============================================================================
 # 3. 用例矩阵设计
@@ -288,6 +316,67 @@ def cross_validate!
     end
   end
 
+  # T1.5：キャラメイク 6 表（无 datarange、无補正、无钳制）
+  CHARAMAKE_TABLES.each do |key|
+    entry = LEDGER_BY_KEY[key]
+    if entry.nil?
+      errors << "#{key}: ledger 无该表条目"
+      next
+    end
+
+    # ① **无 datarange 铁律**（kimi T1.5 预警 1）。
+    #    天狗的钳制分支挂在 isTableAdditionValue 之下，只有 dice 字面量含 "+x"
+    #    才会置位；本批 6 表 dice 全是 "1d6"/"1d36" → 必须恒为 null。
+    errors << "#{key}: datarange 应为 nil（本批绝不钳制），实为 #{entry['datarange'].inspect}" unless entry["datarange"].nil?
+
+    spec = CODE_CHARAMAKE[key]
+    if spec.nil?
+      errors << "#{key}: 代码缺该表骰型规格"
+      next
+    end
+
+    # ② 骰型一致性（ledger base ↔ 代码 times/sides）
+    dr = entry["dice_ranges"].fetch(0)
+    m = dr["base"].match(/\A(\d+)D(\d+)\z/i)
+    errors << "#{key}: ledger base 无法解析：#{dr['base']}" if m.nil?
+    if m
+      errors << "#{key}: times 不一致 ledger=#{m[1]} code=#{spec[:times]}" if m[1].to_i != spec[:times]
+      errors << "#{key}: sides 不一致 ledger=#{m[2]} code=#{spec[:sides]}" if m[2].to_i != spec[:sides]
+    end
+
+    # ③ 条目数跨度
+    items = I18n.t("NinjaSlayer2Ex.table.#{key}.items", locale: :ja_jp, raise: true)
+    span = entry["max_index"] - entry["min_index"] + 1
+    errors << "#{key}: items 长度 #{items.size} ≠ data_index 跨度 #{span}" if items.size != span
+
+    # ④ **可达域 == 表跨度**：本批无钳制，出目越界即"不响应"，
+    #    故掷骰可达域必须与 items 长度严格相等（1D6→6 条、1D36→36 条）。
+    reachable = spec[:times] * spec[:sides]
+    errors << "#{key}: 掷骰可达域 #{reachable} ≠ items 数 #{items.size}（无钳制时二者须恒等）" if reachable != items.size
+  end
+
+  # T1.5：聖戦判定
+  # ① 骰型：JSON 的 wasshoi.dice_expression（"2d6"）↔ 代码常量
+  seisen_expr = SEISEN_JSON["dice_expression"].to_s.match(/\A(\d*)d(\d+)\z/i)
+  if seisen_expr.nil?
+    errors << "SEISEN: JSON dice_expression 无法解析：#{SEISEN_JSON['dice_expression']}"
+  else
+    want_times = seisen_expr[1].empty? ? 1 : seisen_expr[1].to_i
+    errors << "SEISEN: times 不一致 json=#{want_times} code=#{CODE_SEISEN_TIMES}" if want_times != CODE_SEISEN_TIMES
+    errors << "SEISEN: sides 不一致 json=#{seisen_expr[2]} code=#{CODE_SEISEN_SIDES}" if seisen_expr[2].to_i != CODE_SEISEN_SIDES
+  end
+
+  # ② 判定式：JSON 的 comparison 必须就是 "sum <= dkk"
+  errors << "SEISEN: JSON comparison 非 <= 语义：#{SEISEN_JSON['comparison']}" unless SEISEN_JSON["comparison"].include?("<=")
+  errors << "SEISEN: 代码 SEISEN_CMP 应为 :<=，实为 #{KLASS::SEISEN_CMP.inspect}" unless KLASS::SEISEN_CMP == :<=
+
+  # ③ 文案：yml 的 judge 段 ↔ JSON 的 wasshoi（逐字）
+  %w[judge_name success_word success_message failure_word].each do |k|
+    want = k == "judge_name" || k == "success_message" ? SEISEN_JSON.dig("kinds", "SEISEN", k) : SEISEN_JSON[k]
+    got = I18n.t("NinjaSlayer2Ex.judge.SEISEN.#{k}", locale: :ja_jp, raise: true)
+    errors << "SEISEN 文案 #{k} 不一致 json=#{want.inspect} yml=#{got.inspect}" if want != got
+  end
+
   errors
 end
 
@@ -312,6 +401,9 @@ def render_case(key, dice_key, input, rolls, output)
   lines << "game_system = \"#{GAME_SYSTEM_ID}\""
   lines << "input = \"#{toml_escape(input)}\""
   lines << "output = \"#{toml_escape(output)}\""
+  # T1.5：定値表示用例的 rolls 为空数组——runner 会把 rands 映射成空数组，
+  # 而实现在定値路径上**不掷骰**，故不会触发 RandomizerMock 的 @rands is empty!。
+  # runner 的 `data[:rands].map` 对空数组安全，无需特判。
   lines << "rands = ["
   rolls.each { |(value, sides)| lines << "  { sides = #{sides}, value = #{value} }," }
   lines << "]"
@@ -349,9 +441,54 @@ ERROR_CASES = %w[
   KRS_A@
 ].freeze
 
-def generate_error_cases
+# T1.5 的异常系（キャラメイク 6 表 + 定値表示 + 聖戦）。
+#
+# 与 T1.4 的卡尔马异常系**分开登记**：两者都断言"不响应"，但触发原因不同
+# （卡尔马是"天狗要求显式骰型/非数字補正"，本批是"越界/前导零/数字缺失"），
+# 混在一张表里日后增删会互相干扰。
+T15_ERROR_CASES = [
+  # 定値表示越界（上下界外）
+  "NJI@0", "NJI@7", "NJI@99", "NJS@7", "NJN@0", "NJC@7", "NJK@37", "NJB@37",
+  # 前导零（天狗 /fnd 是字符串键直查，"03" 查不到 → 不响应）
+  "NJI@03", "NJK@025", "NJB@0036",
+  # 定値表示的畸形输入
+  "NJI@", "NJI@abc", "NJK@-1", "NJB@+3",
+  # 未知の扩展表（不得被 NJ 前缀误吞）
+  "NJX", "NJQ@3", "NJA@3", "NJO@3",
+  # 聖戦：数字缺失 / 非数字 / 负数 / 全角叹号（T1.5 实测均不响应）
+  "SEISEN", "SEISEN!", "SEISEN!9", "SEISEN！9",
+  "SEISEN-1", "SEISEN+9", "SEISEN9a", "SEISENabc",
+  # `SEISEN 9` 会被引擎的 trim_after_whitespace 截成 `SEISEN` → 不响应。
+  # （天狗侧是 DiceRoll 先剥空白再匹配、故响应；差异已在 HELP 与报告记录。）
+  "SEISEN 9",
+  "SSEISEN"
+].freeze
+
+# @param cases [Array<String>] 期望"不响应"的命令清单
+# @return [Array(String, Integer)] toml 文本 + 条数
+def generate_error_cases(cases = ERROR_CASES)
   out = []
-  ERROR_CASES.each do |cmd|
+  cases.each do |cmd|
+    # 异常系名单必须是**裸命令**：纯 ASCII、无空白、无引号。
+    #
+    # ⚠ 这条守卫是被真实事故逼出来的（T1.5）：异常系最初写成 `%w[...]` 并在
+    #   元素之间插了 `# 注释` 行，而 `%w` 按空白切分、不认 `#`，
+    #   于是「前导零（…"03"…）」整行变成了一个字面命令，
+    #   生成器把它写进 `input = "..."` → **产出的 toml 语法非法、整个套件炸**。
+    #   而"每条都真的不响应"的自检**照样通过**（垃圾串当然不响应），
+    #   即静默产出坏文件。故在生成前显式拦。
+    #
+    #   字符集允许两项**有意**的非裸字符输入：
+    #     ① 全角叹号 `！` —— 天狗 WASSHOI 分支收 `！` 而 SEISEN 分支不收，
+    #        故 `SEISEN！9` 必须不响应；
+    #     ② 内部空白 —— `SEISEN 9` 会被引擎的 trim_after_whitespace 截成
+    #        `SEISEN`（不响应），与天狗「先剥空白再匹配（响应）」的行为差异
+    #        需要被用例钉住，见 docs/t1.5-report.md §4。
+    #   除这两项外仍只允许裸 ASCII，防止注释/垃圾串混入。
+    unless cmd.match?(/\A[A-Za-z0-9_@.!＋+\-！]+( +[A-Za-z0-9_@.!＋+\-！]+)*\z/)
+      abort_with("异常系条目含非法字符（只允许裸 ASCII 命令 + 全角叹号 + 内部空白，勿把注释写进 %w/数组）：#{cmd.inspect}")
+    end
+
     # 断言「真的不响应」——生成器自检：若某条开始响应了立即 abort，
     # 防止异常系名单与实现漂移后仍写入一条假用例。
     gs = KLASS.new(cmd)
@@ -370,14 +507,187 @@ def generate_error_cases
     out << "]"
     out << ""
   end
-  [out.join("\n"), ERROR_CASES.size]
+  [out.join("\n"), cases.size]
 end
 
-def generate_block
+# ============================================================================
+# 4b. T1.5 用例生成：キャラメイク 6 表（掷骰 + @n 定値）+ 聖戦判定
+# ============================================================================
+#
+# 矩阵设计（与 T1.4 卡尔马的**根本差异**，逐条对应评审预警 1）：
+#
+#   本批 6 表**无 datarange、无 +x 補正**，故没有"钳制"这一档：
+#     掷骰档位 = 出目 1（min 边界）、出目 2（防 off-by-one）、
+#                出目中点（语义锚点）、出目 sides（max 边界）。
+#     因可达域 1..sides 与 items 数严格相等（§4 交叉校验④），
+#     掷骰路径**不存在**越界，故不生成钳制档。
+#
+#   `@n` 定値档位 = 出目 1、出目 2、出目 中点、出目 max。
+#     边界外（前导零 / 超上界）由 ERROR_CASES 覆盖。
+#     特别地 `@1` 与 `@max` 是两侧边界，与掷骰档位形成"同一条目两条路"的对照。
+#
+#   `@n` 与掷骰的一致性自检：同一条目应能被两条路径取到，
+#     故生成器额外断言 `NJI@k` 的正文 == `NJI`（出目 k） 的正文后半段。
+#     这是任务书要求的"@n 定值与表文本改写后的一致性"的机械保障。
+#
+#   SEISEN 档位 = 成功（sum <= dkk）、失败（sum > dkk）、
+#                边界相等（sum == dkk，成功侧）、DKK 极端（0 恒失败 / 99 恒成功）。
+
+# 渲染色brick用的 toml 片段（复用 §5 的 render_case / toml_escape）。
+def generate_chara_make_block
   out = []
   total = 0
 
-  KARMAROND_KEYS.each do |key|
+  CHARAMAKE_TABLES.each do |key|
+    spec = CODE_CHARAMAKE[key]
+    times = spec[:times]
+    sides = spec[:sides]
+
+    # 4 档出目：min / min+1 / 中点 / max。times 恒为 1，故直接用出目值即可。
+    mid = ((1 + sides) / 2.0).ceil
+    probes = [[1, "出目 1（下边界）"], [2, "出目 2（下边界 +1）"], [mid, "出目 #{mid}（中点）"], [sides, "出目 #{sides}（上边界）"]]
+
+    # 1D6 表（items ≤ 6）改为**全量覆盖**。
+    #
+    # 动机是实证性的：NJI 的第 6 项正文写着「「NJI@n」（nは1～5）を入力すると…」，
+    # 这段表文本里的命令引用必须**真的都能用**。若只取 4 档探针（1/2/4/6），
+    # @3 与 @5 就只剩"理论上合法"而无用例钉住，头注里"真实可用"的说法会落空。
+    # 6 张表里 4 张是 1D6，全量生成也只多 8 条用例，成本可忽略。
+    if sides <= 6
+      probes = (1..sides).map { |v| [v, "出目 #{v}"] }
+    end
+    probes.uniq! { |target, _| target }
+
+    probes.each do |target, label|
+      rolls = [[target, sides]]
+
+      # ① 掷骰档
+      output, = eval_case(key, rolls)
+      abort_with("#{key}（出目 #{target}）未响应——生成器与实现不同步") if output.nil?
+      expect_contains = "(#{target})"
+      abort_with("#{key} 出目 #{target}: 输出未含 #{expect_contains}\n  output=#{output[0, 120]}") unless output.include?(expect_contains)
+
+      out << "# #{key} #{spec[:expr]} 掷骰｜#{label}"
+      out << render_case(key, "A", key, rolls, output)
+      out << ""
+      total += 1
+
+      # ② 同出目的 `@n` 定値档（不掷骰，rands 为空数组）
+      fixed_output, = eval_case("#{key}@#{target}", [])
+      abort_with("#{key}@#{target} 未响应——定値表示路径可能已坏") if fixed_output.nil?
+      abort_with("#{key}@#{target}: 定値输出未含表名标签\n  output=#{fixed_output[0, 120]}") unless fixed_output.start_with?("#{label_key(key)}(#{target}) ＞ ")
+
+      out << "# #{key}@#{target} 定値表示｜#{label}（不掷骰，天狗 /fnd 等价）"
+      out << render_case(key, "A", "#{key}@#{target}", [], fixed_output)
+      out << ""
+      total += 1
+
+      # ③ 一致性自检：定値正文 == 掷骰正文 == yml 该出目的原文。
+      #
+      #    比对基准用 **yml items[target-1]**（唯一真相），而不是互相剥离前缀——
+      #    两条路径的前缀形态本就不同（掷骰是 `(1) ＞ `、定値没有出目段），
+      #    互相比对需要脆弱的多层正则。这里三方对齐，任何一侧被手改都会红。
+      want_body = I18n.t("NinjaSlayer2Ex.table.#{key}.items", locale: :ja_jp, raise: true)[target - CODE_CHARAMAKE_MIN_INDEX]
+      roll_body = output.split(" ＞ ", 3)[2]
+      fixed_body = fixed_output.split(" ＞ ", 2)[1]
+      abort_with("#{key} 出目 #{target}: 掷骰正文与 yml 不一致") unless roll_body == want_body
+      abort_with("#{key}@#{target}: 定値正文与 yml 不一致") unless fixed_body == want_body
+    end
+
+    # 表文本内嵌的命令引用必须**真的可执行**（任务书验收项）。
+    #
+    # NJI[6] 的正文写着「「NJI@n 」（nは1～5）を入力すると…」。
+    # 这不是装饰文字——它是一份**给玩家的用法说明**，若 `NJI@3` 之类的命令
+    # 实际不响应，说明文本在骗人。故逐个实跑 n=1..5 确认全部有输出。
+    #
+    # 泛化思路：扫描本批各表的 items，凡匹配 `/\b(NJ[A-Z])@n\b/` 的，
+    # 就按文案给出的范围逐个实跑。这里对 NJI 写死 1..5 是因为**范围就写在正文里**，
+    # 去解析日文数字范围属于过度设计；一旦文案改成别的范围，
+    # 这条断言会因实跑失败而红——那正是我们要的信号。
+    next unless key == "NJI"
+
+    (1..5).each do |n|
+      body, = eval_case("NJI@#{n}", [])
+      abort_with("NJI[#{n + 1}] 正文引用了 `NJI@n`（n=#{n}），但该命令未响应——" \
+                  "表文本里的用法说明与实际行为不符") if body.nil?
+    end
+  end
+
+  [out.join("\n"), total]
+end
+
+# 定値输出的表名前缀（与 chara_make_table_label 同解：yml name 按 '(' 截断）
+def label_key(key)
+  I18n.t("NinjaSlayer2Ex.table.#{key}.name", locale: :ja_jp, raise: true)[/\A[^(]*/]
+end
+
+# 聖戦判定的用例。
+#
+# 每条都钉住「输出文本 + success/failure 标志」两者——天狗只输出纯字符串，
+# 本扩展额外提供成败标志，故 toml 里 success/failure 字段也要断言。
+#
+# @param dkk [Integer]
+# @param rolls [Array<Array(Integer,Integer)>] 两颗 6 面骰
+def generate_seisen_case(dkk, rolls, label)
+  input = "SEISEN#{dkk}"
+  gs = KLASS.new(input)
+  gs.randomizer = RandomizerMock.new(rolls.map(&:dup))
+  result = gs.eval
+  abort_with("#{input}（#{label}）未响应——聖戦路径可能已坏") if result.nil?
+
+  total = rolls.sum { |(v, _)| v }
+  expect_success = total <= dkk
+  abort_with("#{input}: success 标志应为 #{expect_success}，实为 #{result.success?}（#{label}）") unless result.success? == expect_success
+  abort_with("#{input}: failure 标志应为 #{!expect_success}，实为 #{result.failure?}（#{label}）") unless result.failure? == !expect_success
+
+  lines = []
+  lines << "# 聖戦判定 #{label}｜合計 #{total}<=#{dkk}"
+  lines << "[[ test ]]"
+  lines << "game_system = \"#{GAME_SYSTEM_ID}\""
+  lines << "input = \"#{toml_escape(input)}\""
+  lines << "output = \"#{toml_escape(result.text)}\""
+  lines << "success = #{expect_success}"
+  lines << "failure = #{!expect_success}"
+  lines << "rands = ["
+  rolls.each { |(value, sides)| lines << "  { sides = #{sides}, value = #{value} }," }
+  lines << "]"
+  [lines.join("\n"), 1]
+end
+
+def generate_seisen_block
+  out = []
+  total = 0
+
+  # 2D6 的合计域 2..12。逐档覆盖：
+  #   成功侧（远低于 dkk）、边界相等、失败侧（高于 dkk），以及 DKK 极端值。
+  probes = [
+    [9, [[2, 6], [4, 6]], "成功：合計 6 < 9"],
+    [9, [[3, 6], [6, 6]], "成功：合計 9 = 9（边界相等，含成功文案）"],
+    [9, [[4, 6], [6, 6]], "失败：合計 10 > 9"],
+    [2, [[1, 6], [2, 6]], "失败：合計 3 > 2（dkk 极小）"],
+    [0, [[1, 6], [1, 6]], "失败：DKK=0 恒失败（天狗 seisen0 合法）"],
+    [99, [[6, 6], [6, 6]], "成功：DKK=99 恒成功（天狗允许无上界）"],
+    [12, [[6, 6], [6, 6]], "成功：合計 12 = 12（2D6 上界恰等于 dkk）"],
+    [11, [[6, 6], [6, 6]], "失败：合計 12 > 11（2D6 上界差 1 即失败）"],
+  ]
+
+  probes.each do |dkk, rolls, label|
+    block, n = generate_seisen_case(dkk, rolls, label)
+    out << block
+    out << ""
+    total += n
+  end
+
+  [out.join("\n"), total]
+end
+
+# @param keys [Array<String>] 要生成的卡尔马派阀键
+# @return [Array(String, Integer)] toml 文本 + 条数
+def generate_block(keys = KARMAROND_KEYS)
+  out = []
+  total = 0
+
+  keys.each do |key|
     range = CODE_RANGE[key]
     CODE_DICE[key].each do |dice_key, spec|
       variants = build_case_variants(spec, range)
@@ -418,23 +728,43 @@ end
 # ============================================================================
 # 6. 哨兵块替换（幂等的核心）
 # ============================================================================
+#
+# T1.5 起本脚本管**两个**独立哨兵块（各自 BEGIN/END 一对，互不嵌套）：
+#   - T1.4 KARMAROND  ：5 派阀 × 4 骰型 × 边界矩阵 + 卡尔马异常系
+#   - T1.5 CHARAMAKE ：6 キャラメイク表 ×（掷骰 + @n 定値）+ SEISEN + T1.5 异常系
+#
+# 分块而非合成一个大块的理由：两个任务的用例来源不同（卡尔马有钳制/補正矩阵，
+# キャラメイク没有），合成一块会让任一侧重生成时无谓地 churn 另一段的排版。
+#
+# 块序固定 = 文件内先后序（append 型 splice 把新块追加到文末）。
+
 BEGIN_MARK = "# >>> BEGIN GENERATED: T1.4 KARMAROND"
 END_MARK = "# <<< END GENERATED: T1.4 KARMAROND"
 
-def splice_block(existing, block)
-  b = existing.index(BEGIN_MARK)
-  e = existing.index(END_MARK)
+BEGIN_MARK_T15 = "# >>> BEGIN GENERATED: T1.5 CHARAMAKE"
+END_MARK_T15 = "# <<< END GENERATED: T1.5 CHARAMAKE"
+
+# 把 block 塞进 (begin, end) 哨兵；不存在则追加到文件末尾。
+#
+# @param existing [String] 当前文件全文
+# @param block [String] 哨兵内的块正文
+# @param begin_mark [String]
+# @param end_mark [String]
+# @return [String]
+def splice_block(existing, block, begin_mark = BEGIN_MARK, end_mark = END_MARK)
+  b = existing.index(begin_mark)
+  e = existing.index(end_mark)
   if b && e
     abort_with("哨兵块嵌套/顺序异常（END 在 BEGIN 之前）") if e < b
 
     head = existing[0...b]
-    tail = existing[(e + END_MARK.length)..] || ""
-    return "#{head}#{BEGIN_MARK}\n#{block}\n#{END_MARK}#{tail}"
+    tail = existing[(e + end_mark.length)..] || ""
+    return "#{head}#{begin_mark}\n#{block}\n#{end_mark}#{tail}"
   elsif b || e
     abort_with("哨兵不成对（BEGIN/END 只出现一个）——请手工检查 #{TARGET_FILE}")
   else
     sep = existing.end_with?("\n") || existing.empty? ? "" : "\n"
-    "#{existing}#{sep}\n#{BEGIN_MARK}\n#{block}\n#{END_MARK}\n"
+    "#{existing}#{sep}\n#{begin_mark}\n#{block}\n#{end_mark}\n"
   end
 end
 
@@ -451,16 +781,7 @@ unless errors.empty?
   errors.each { |e| warn("  - #{e}") }
   abort
 end
-puts "[gen_table_toml] ✓ 三方交叉校验通过（#{KARMAROND_KEYS.size} 表）"
-
-# 只生成请求的表（--tables 可裁剪）
-requested = options[:tables]
-unless requested.sort == KARMAROND_KEYS.sort
-  abort_with("本生成器目前只覆盖 T1.4 的 #{KARMAROND_KEYS.join(',')}（--tables 给了 #{requested.join(',')}）")
-end
-
-block, count = generate_block
-puts "[gen_table_toml] 用例 #{count} 条（#{KARMAROND_KEYS.join(',')} × 4 骰型 × 边界矩阵）"
+puts "[gen_table_toml] ✓ 三方交叉校验通过（#{KARMAROND_KEYS.size} 卡尔马 + #{CHARAMAKE_TABLES.size} キャラメイク + SEISEN）"
 
 if options[:check_only]
   puts "[gen_table_toml] --check：仅校验，未写盘（md5 应保持不变）"
@@ -468,6 +789,77 @@ if options[:check_only]
 end
 
 existing = File.read(TARGET_FILE, encoding: "UTF-8")
-updated = splice_block(existing, block)
+
+# --tables 裁剪：只生成请求的表所在的批（两批各自独立哨兵块）。
+#
+# 裁剪时**只影响本批块**——例如 `--tables NJI` 不会去动卡尔马块。
+# 跨批混选（`--tables KRS,NJI`）允许：两批都会被重生成。
+unknown = options[:tables] - ALL_TABLES
+abort_with("未知表键 #{unknown.inspect}；可选：#{ALL_TABLES.join(',')}") unless unknown.empty?
+
+want_karma = (options[:tables] & DEFAULT_TABLES)
+want_chara = (options[:tables] & CHARAMAKE_TABLES)
+# SEISEN 不在 --tables 的表键体系里（它不是表），故跟随キャラメイク批一同生成。
+
+if want_karma.empty? && want_chara.empty?
+  abort_with("--tables 未选中任何表")
+end
+
+# --- 块 1：T1.4 卡尔马 ---
+unless want_karma.empty?
+  block14, count14 = generate_block(want_karma)
+  puts "[gen_table_toml] T1.4 卡尔马用例 #{count14} 条（#{want_karma.join(',')} × 4 骰型 × 边界矩阵）"
+  updated = splice_block(existing, block14, BEGIN_MARK, END_MARK)
+else
+  updated = existing
+  puts "[gen_table_toml] 未选中卡尔马表，跳过 T1.4 块"
+end
+
+# --- 块 2：T1.5 キャラメイク + SEISEN ---
+unless want_chara.empty?
+  chara_block, chara_count = generate_chara_make_block
+  seisen_block, seisen_count = generate_seisen_block
+  err15_block, err15_count = generate_error_cases(T15_ERROR_CASES)
+  t15_total = chara_count + seisen_count + err15_count
+  puts "[gen_table_toml] T1.5 キャラメイク #{chara_count} 条 + 聖戦 #{seisen_count} 条 + 异常系 #{err15_count} 条 = #{t15_total} 条"
+
+t15_block = <<~HEADER
+  # ---------------------------------------------------------------------------
+  # T1.5 キャラメイク 6 表 + 聖戦判定
+  #
+  # 语义要点（逐条对应 kimi-code T1.5 评审预警）：
+  #   - **绝不钳制**：6 表 datarange 恒为 null（天狗 dice 字面量无 "+x"，
+  #     isTableAdditionValue 不置位 → 直接 data[出目]）。故掷骰路径越界不可达，
+  #     无钳制档位；越界只在 `@n` 定値路径可达，且按天狗语义**不响应**。
+  #   - **d36 = 单颗 36 面**（钉版快照 Node 实测：resArray 恒长 1，5000 次
+  #     掷骰 sum ∈ [1,36]，且 6 表均无 d66Option），**非** D66 组合表。
+  #   - **`@n` = 定値显示**（天狗 /fnd 的 ASCII 等价）：不掷骰，rands 为空数组。
+  #     与卡尔马的 `@±n`（補正值）是**同字符两语义**，按表区分。
+  #     前导零 / 超上界一律不响应（天狗 data 是字符串键直查，"03" 查不到）。
+  #   - 每个出目都同时生成「掷骰」与「@n 定値」两条用例，且生成器断言
+  #     **两者正文逐字相同**——这同时钉住"表文本改写后的一致性"。
+  #     NJI[6] 的正文引用了 `NJI@n`，该命令在本文件下方作为真实用例存在，
+  #     文本里的命令引用因此是可执行的（不是死引用）。
+  #   - **SEISEN**：2D6、合計 <= DKK 成功。输出骨架逐字对齐天狗
+  #     wasshoi.js:42-44；成功文案来自 yml judge 段（源自 JSON）。
+  #     天狗 KIND.SEISEN 正则无 `!`（对比 WASSHOI 分支有），故 `SEISEN!9` 不响应。
+  # ---------------------------------------------------------------------------
+
+  #{chara_block}
+
+  # --- 聖戦判定（SEISEN）---
+  #{seisen_block}
+
+  #{err15_block}
+HEADER
+
+  updated = splice_block(updated, t15_block, BEGIN_MARK_T15, END_MARK_T15)
+else
+  puts "[gen_table_toml] 未选中キャラメイク表，跳过 T1.5 块"
+end
+
 File.write(TARGET_FILE, updated, encoding: "UTF-8")
-puts "[gen_table_toml] ✓ 已写入 #{TARGET_FILE.sub("#{ROOT}/", '')}（哨兵块内 #{count} 条用例）"
+parts = []
+parts << "T1.4 #{count14} 条" if want_karma.any?
+parts << "T1.5 #{t15_total} 条" if want_chara.any?
+puts "[gen_table_toml] ✓ 已写入 #{TARGET_FILE.sub("#{ROOT}/", '')}（#{parts.join(' + ')}）"

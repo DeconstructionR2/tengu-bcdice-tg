@@ -929,3 +929,14 @@ ja_jp:
           マップ上にいるNPC1人（標的ニンジャから最も近くにいる者）が、実はニンジャスレイヤーの変装であった。
           そのNPCのコマを【殺】に変更せよ（本物のNPCがどこにいったのかはニンジャマスターが後で考える）。
           激しい恐怖や動揺により、次のターンの終了時まで、その場にいる【DKK】1以上のニンジャ全員は『連続側転難易度』が+2される。
+    judge:
+      dice_expression: 2d6
+      comparison: dice.sum <= Number(dkk)
+      SEISEN:
+        judge_name: 聖戦判定
+        success_word: 成功！
+        success_message: |2-
+
+
+          :japanese_goblin: **「……神々の使者、ヤクザ天狗参上！」** :japanese_goblin:
+        failure_word: 失敗

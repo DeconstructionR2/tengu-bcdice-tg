@@ -66,6 +66,36 @@ def rewrite_items(items)
   items.map { |t| TEXT_REWRITE.reduce(t) { |s, (from, to)| s.gsub(from, to) } }
 end
 
+# ---------------------------------------------------------------------------
+# 1.6 判定文案（SEISEN）—— 非表文本，走 yml 的 `judge` 段（T1.5 新增）
+#
+#    天狗的聖戦判定文案硬编码在 tengu_dice/wasshoi.js:5-6 / 51-62 的 KIND 常量里，
+#    不在 nd_datatable.js 的表数据中，故 json_to_i18n 的逐表映射覆盖不到它。
+#    铁律同上：日文文案逐字来自 JSON（extract_tengu_data.mjs 的 $.wasshoi 段），
+#    Ruby 侧只搬运不重写，生成物仍可逐字回读自检。
+#
+#    产出键：NinjaSlayer2Ex.judge.SEISEN.{judge_name,success_message,failure_word}
+#            NinjaSlayer2Ex.judge.SEISEN.{dice_expression,comparison}
+# ---------------------------------------------------------------------------
+def build_judge_section(json_data, namespace)
+  w = json_data["wasshoi"]
+  abort "[json_to_i18n] JSON 缺 wasshoi 段（先跑 node scripts/extract_tengu_data.mjs）" if w.nil?
+
+  seisen = w.dig("kinds", "SEISEN")
+  abort "[json_to_i18n] JSON 的 wasshoi.kinds 缺 SEISEN" if seisen.nil?
+
+  {
+    "dice_expression" => w["dice_expression"],
+    "comparison" => w["comparison"],
+    "SEISEN" => {
+      "judge_name" => seisen["judge_name"],
+      "success_word" => w["success_word"],
+      "success_message" => seisen["success_message"],
+      "failure_word" => w["failure_word"]
+    }.freeze
+  }.freeze
+end
+
 MAPPING = [
   # ===================== 2版 → NinjaSlayer2Ex（12 张）========================
   { ja: "nsrs発狂", kind: :nsl2ex, key: "NSRS", status: :planned,
@@ -192,6 +222,9 @@ nsl2ex = load_existing(OUT_NSL2EX)
 nsl1ex = load_existing(OUT_NSLEX)
 nsl2ex["table"] ||= {}
 nsl1ex["table"] ||= {}
+# T1.5：判定文案段（SEISEN）挂在 2版命名空间的 `judge` 下，与 `table` 平级。
+# load_existing 返回的是既有命名空间 Hash，重跑时直接覆盖（内容源自 JSON，幂等）。
+nsl2ex["judge"] = build_judge_section(data, "NinjaSlayer2Ex")
 
 # ---------------------------------------------------------------------------
 # 4. 逐表生成
@@ -236,7 +269,14 @@ MAPPING.each do |m|
   key = m[:key]
   type = to_bcdice_type(src["dice"]["a"] || src["dice"].values.first)
   existing = ns["table"][key]
-  if existing && existing["items"] != src["items"]
+  # ⚠ 比对对象必须是 **rewrite 后的** items，不是 JSON 原文（T1.5 修正）：
+  #   T1.3 引入 TEXT_REWRITE（表文本内嵌命令引用 ASCII 化）后，yml 里存的是
+  #   rewrite_items(src["items"])，而本守卫仍拿它与 src["items"]（原文）比——
+  #   凡命中改写的表（NSRS 的 `NSRS_D`、NJI 的 `NJI@n`）恒被判「内容不同」，
+  #   于是 `next` 跳过写表，**且该表的 ledger 条目被静默丢弃**
+  #   （T1.5 实测：重跑生成器后 ledger 从 25 条掉到 23 条，NSRS/NJI 消失）。
+  #   对齐 §6 逐字回读自检的写法（那里比的就是 rewrite_items(...)）。
+  if existing && existing["items"] != rewrite_items(src["items"])
     already << "⚠ 键 #{key} 已存在且内容不同，**未覆盖**（请人工裁决）"
     next
   end
@@ -269,8 +309,8 @@ uncovered = data["tables"].keys - MAPPING.map { |m| m[:ja] }
 # ---------------------------------------------------------------------------
 # 5. 写盘（YAML.dump —— 铁律：禁止手工拼 YAML）
 # ---------------------------------------------------------------------------
-def dump_yaml(namespace, tables, path, ledger_rows)
-  doc = { "ja_jp" => { namespace => { "table" => tables } } }
+def dump_yaml(namespace, tables, path, ledger_rows, extra_sections = {})
+  doc = { "ja_jp" => { namespace => { "table" => tables }.merge(extra_sections) } }
   body = YAML.dump(doc)
   keys = tables.keys.join(", ")
   header = <<~HEADER
@@ -297,7 +337,7 @@ def dump_yaml(namespace, tables, path, ledger_rows)
 end
 
 unless options[:dry_run]
-  dump_yaml("NinjaSlayer2Ex", nsl2ex["table"], OUT_NSL2EX, ledger)
+  dump_yaml("NinjaSlayer2Ex", nsl2ex["table"], OUT_NSL2EX, ledger, { "judge" => nsl2ex["judge"] })
   dump_yaml("NinjaSlayerEx", nsl1ex["table"], OUT_NSLEX, ledger)
   File.write(LEDGER_PATH, YAML.dump({
     "source_json" => "references/extracted/tengu_tables.json",
@@ -337,6 +377,22 @@ unless options[:dry_run]
       if got["items"].length != idxs.max - idxs.min + 1
         selfcheck[:mismatched] << "#{m[:ja]} → #{m[:key]} items 数(#{got['items'].length}) 与 data_index 跨度(#{idxs.min}..#{idxs.max}) 不符"
       end
+    end
+  end
+
+  # T1.5：SEISEN 判定文案逐字回读（表外文案同样受铁律约束）
+  reread = YAML.load_file(File.join(ROOT, "i18n/NinjaSlayer2Ex/ja_jp.yml"), aliases: true)
+  got_judge = ((reread["ja_jp"] || {}).values.find { |v| v.is_a?(Hash) } || {})["judge"]
+  want_judge = build_judge_section(data, "NinjaSlayer2Ex")
+  selfcheck[:checked] += 1
+  if got_judge.nil?
+    selfcheck[:mismatched] << "NinjaSlayer2Ex.judge 段缺失（SEISEN 文案）"
+  else
+    %w[dice_expression comparison].each do |k|
+      selfcheck[:mismatched] << "judge.#{k} 逐字不一致" if got_judge[k] != want_judge[k]
+    end
+    %w[judge_name success_word success_message failure_word].each do |k|
+      selfcheck[:mismatched] << "judge.SEISEN.#{k} 逐字不一致" if got_judge.dig("SEISEN", k) != want_judge.dig("SEISEN", k)
     end
   end
 end

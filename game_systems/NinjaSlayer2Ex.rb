@@ -120,11 +120,56 @@ module BCDice
         範囲のうち最も近い値の項目を参照します
         （ソウカイヤ＝1〜12、その他 4 派閥＝1〜6。天狗と同じクランプ）。
         ※ 未知の派閥（例：KRB）や未知のダイス型（例：KRS_E）は応答しません。
+
+        --- キャラメイク 6 表（T1.5）---
+        キャラクターシート作成時に引く表です。
+        6 表とも **補正なし・クランプなしの純查表** です
+        （天狗側に datarange が無く、出目が表の収録範囲を外れる概念がありません）。
+
+        - NJI        初期ジツ系統        （1D6）
+        - NJS        初期スキル          （1D6）
+        - NJN        初期アイテム        （1D6）
+        - NJK        初期知識スキル      （1D36）
+        - NJC        初期サイバネ        （1D6）
+        - NJB        生い立ち            （1D36）
+
+        定値表示（`@出目`）:
+        dice を振らずに、指定した出目の項目だけを表示します。
+        - NJI@3       → 初期ジツ系統 の 3 番
+        - NJK@25      → 初期知識スキル の 25 番
+        - NJB@11      → 生い立ち の 11 番
+
+        例：
+        - NJI         → 1D6 を振って初期ジツ系統表を引く
+        - NJK@25      → 振らずに初期知識スキル表の 25 番を表示
+        - NJI@6       → 出目 6（＝「1〜5 から選べ」の一文）を表示
+
+        ※ `@出目` は**表の収録範囲内**（1D6 表＝1〜6、1D36 表＝1〜36）だけ応答します。
+        範囲外（例：NJI@0 / NJI@7 / NJK@37）は応答しません。
+        ※ 先頭の 0 は範囲外として扱います（例：NJI@03 は応答しません）。
+        ※ **注意（同じ `@` でも意味が表により異なります）**：
+          本 6 表の `@n` は「**定値表示**」（dice を振らない）、カルマロンダリング
+          5 派閥の `@±n` は「**補正値**」（dice に足してから引く）です。
+          見分け方は表名で判断してください。
+
+        --- 聖戦判定（T1.5）---
+        - SEISEN{DKK}
+        2D6 を振り、合計が DKK 以下のとき成功します。
+        天狗の wasshoi.js seisen と同じ判定式（合計 <= DKK）です。
+
+        例：
+        - SEISEN9      → 2D6 を振り、合計が 9 以下なら成功
+        - SEISEN7      → 2D6 を振り、合計が 7 以下なら成功
+
+        ※ `SEISEN`（数字なし）は応答しません。
+        ※ 2D6 の合計は 2〜12 なので、DKK が 12 以上なら必ず成功、
+        DKK が 1 以下なら必ず失敗になります（仕様どおり）。
       TEXT
 
       # T1.1①：先继承超类全部前缀（UH/[KENHU]/SB/WS/WSE/NRS）。
       # T1.3：再用 register_prefix 追加本扩展的三个新前缀。
       # T1.4：追加カルマロンダリング 5 派阀前缀（KRS/KRZ/KRA/KRO/KRY）。
+      # T1.5：追加キャラメイク 6 表前缀 + 聖戦判定前缀（SEISEN）。
       #
       # ⚠ 时序铁律（spike-t1.1-report.md §5.7 / 上游 base.rb:35-47）：
       # prefixes 在首次 eval / command_pattern / prefixes_pattern 调用时冻结，
@@ -138,7 +183,19 @@ module BCDice
         "KRZ",
         "KRA",
         "KRO",
-        "KRY"
+        "KRY",
+        # T1.5：キャラメイク 6 表。**前缀注册顺序无功能含义**，
+        # 只影响 command_pattern 的正则顺序；这 6 个前缀两两不互为前缀
+        # （NS/NJ 开头各自独立），不存在遮蔽问题（已由 toml 异常系用例钉住）。
+        # 注意与父类前缀的潜在歧义：父类注册了 "NRS"，本批 NJ* 不与之重叠。
+        "NJI",
+        "NJS",
+        "NJN",
+        "NJK",
+        "NJC",
+        "NJB",
+        # T1.5：聖戦判定。
+        "SEISEN"
       )
 
       # 本扩展表命令的正则。
@@ -292,6 +349,154 @@ module BCDice
       # 分组：1=派阀 / 2=骰型(带@时) / 3=補正值(带@时) / 4=骰型(不带@时)
       RE_KARMAROND = /^(KRS|KRZ|KRA|KRO|KRY)(?:_([ABCD])@([+-]?\d+(?:\.\d+)?)|(?:_([ABCD]))?)$/i.freeze
 
+      # ======================================================================
+      # T1.5：キャラメイク 6 表 + 定値表示 `@n` + 聖戦判定
+      # ======================================================================
+      #
+      # 语义铁律（逐条对应 kimi-code T1.5 评审预警，四项全落实）：
+      #
+      # ① **绝不钳制**（预警 1）。
+      #    天狗 NJDiscordReply.js:91-97 的钳制分支挂在
+      #    `if (diceroll.isTableAdditionValue)` 之下，而 isTableAdditionValue
+      #    只在 `/\+x/.test(diceStr)` 为真时被置位（SearchTableDiceroll.js:56-77）。
+      #    本批 6 表的 dice 字面量是 "1d6" / "1d36"——**不含 "+x"**，
+      #    故走 else 分支 `tableString = data[diceroll.sumall]`，
+      #    即 ledger 里 6 表 datarange = null 的登记。
+      #    → 因此本批**不得**复用 proc_karmarond 的钳制骨架；
+      #      也不设 DATARANGE 常量（没有可钳的边界，凭空造一个反而是假信息）。
+      #    → 越界语义同天狗：索引越界 → data[出目] 为 undefined → 天狗 addString 为空；
+      #      ASCII 侧取「不响应」（proc_chara_make 显式守卫）。
+      #
+      # ② **d36 = 单颗 36 面**（预警 2，已实证，见 docs/t1.5-report.md §2）。
+      #    天狗 Dice('1d36') 实测：resArray.length 恒 = 1，5000 次掷骰 sum ∈ [1,36]，
+      #    非 D66 的 6×6=36 组合表；6 表里也**没有一张**带 d66Option 字段
+      #    （nd_datatable.js 无此键，全仓 d66Option 仅 NJDiscordReply.js:83 一处判断）。
+      #    → `NJK` / `NJB` 直接掷 1 颗 36 面骰，索引 items[sum - 1]，
+      #      **不存在** D66 式 11..66 → 1..36 的映射。
+      #
+      # ③ **定値表示 `@n` 的越界与前导零**（与天狗 /fnd 逐条对齐，实测同 §2）：
+      #    天狗 discord_command/fnd.js → NJDiscordReply.receiveFixedMessage:115
+      #      `data[stringArray[1]] != null` —— 用**字符串原键**查表。
+      #    → data 的键是 "1".."6" / "1".."36"，故 "03" / "0036" 查不到 → 不响应。
+      #    → 正则写 `[1-9]\d*`（不含 0 开头）+ 显式范围守卫，两者缺一不可：
+      #      只靠正则会漏掉上界（NJI@7 / NJK@37），
+      #      只靠 to_i 会把 "07" 误当合法（`"07".to_i == 7`）。
+      #
+      # ④ **同字符两语义**（任务书要求）：本 6 表 `@n` = 定値显示（不掷骰）；
+      #    T1.4 的 5 派阀 `@±n` = 補正值（掷骰后相加）。两者互不影响——
+      #    正则分支互斥（`NJI@3` 只可能进 CHARAMAKE 分支，`KRS_C@2` 只进 KARMAROND）。
+      #    HELP_MESSAGE 已明写边界。
+      #
+      # ⑤ **聖戦判定**（wassohoi.js:42-44 实测语义）：
+      #    2D6，`dice.sum <= Number(dkk)` 成功。
+      #    输出骨架 `<判定名>! = (a+b) = sum<=dkk  判定成功!<successMessage>`
+      #    / `... 判定失敗`（success_word 用于成功分支，failure_word 用于失败）。
+      #    天狗 KIND.SEISEN 的正则 `/^seisen(\d+)$/i` **不含** `!` / `！`
+      #    （对比 WASSHOI 的 `/^wasshoi[!！]?(\d+)$/i`），故 ASCII 侧同样不收 `!`。
+      #    数字无上下界（天狗 `seisen0` 合法、恒失败；`seisen99` 合法、恒成功），
+      #    ASCII 侧忠实照搬，不自行加 DKK 范围限制。
+      #    ⚠ 空白：BCDice Preprocessor.trim_after_whitespace 会把 "SEISEN 9"
+      #      截成 "SEISEN"（不响应），天狗侧是 DiceRoll 构造函数先剥空白再匹配（响应）。
+      #      这是 BCDice 引擎层的既有行为、**对全部游戏系统一致**，
+      #      不在本扩展内 change_text 覆写（改它会偏离引擎统一语义）。已在 HELP 与
+      #      toml 异常系中显式记录。
+
+      # 6 张表 → 骰型规格。数据源同源：nd_datatable.js 各表的 `dice: { a: "1d6" }`
+      # / `{ a: "1d36" }`，ledger dice_ranges 逐条登记。
+      #
+      # times/sides 是实际掷的骰；无 bonus（本批无带常量的骰型）。
+      # sides=36 即上文铁律②的实证结论（单颗 36 面）。
+      CHARAMAKE_DICE_TYPES = {
+        "NJI" => { expr: "1D6", times: 1, sides: 6 },
+        "NJS" => { expr: "1D6", times: 1, sides: 6 },
+        "NJN" => { expr: "1D6", times: 1, sides: 6 },
+        "NJK" => { expr: "1D36", times: 1, sides: 36 },
+        "NJC" => { expr: "1D6", times: 1, sides: 6 },
+        "NJB" => { expr: "1D36", times: 1, sides: 36 }
+      }.freeze
+
+      # 6 表的索引下限恒为 1（ledger min_index 逐表登记 = 1）。
+      CHARAMAKE_TABLE_MIN_INDEX = 1
+
+      # キャラメイク表的命令正则（裸掷骰 与 定値显示 两分支互斥）。
+      #
+      # `([1-9]\d*)` 而非 `(\d+)`：天狗 /fnd 是**字符串键**直查
+      # （NJDiscordReply.js:115），data 的键为 "1".."6"，
+      # 故 "03" 查不到 → 不响应（铁律③）。
+      # 上界（1D6→6、1D36→36）不在正则里写死，由 proc_chara_make 读 items.length 守卫，
+      # 这样 yml 条目数与命令上界**恒等**，items 被手改时不会出现"表有 6 条但允许 @9"。
+      #
+      # ⚠ 不可写成 `^(...)(?:@(\d+))?$` 的可省略嵌套——虽然功能上等价，
+      #   但会把「不掷骰的定値」与「掷骰」在一条分支里混起来，
+      #   读代码时容易误以为裸命令会走 @n 路径。分成两组捕获更清晰。
+      RE_CHARAMAKE = /^(NJI|NJS|NJN|NJK|NJC|NJB)(?:@([1-9]\d*))?$/i.freeze
+
+      # 聖戦判定的命令正则。
+      #
+      # 天狗 KIND.SEISEN.kindRegExp = /^seisen(\d+)$/i（wasshoi.js:58）：
+      #   - 无 `!` / `！`（那是 WASSHOI 分支才有的）；
+      #   - 数字无正负、无上界（`\d+`）。
+      # ASCII 侧忠实照搬。
+      RE_SEISEN = /^SEISEN(\d+)$/i.freeze
+
+      # 聖戦判定的骰型（wasshoi.js:40 硬编码 `new Dice('2d6')`）。
+      #
+      # 拆成两个常量而非散在方法体里，是为了让 gen_table_toml.rb / 
+      # ledger_consistency_test.rb 能把它当「代码侧规格」来交叉校验
+      # （与 KARMAROND_DICE_TYPES 同样的读法）。
+      SEISEN_DICE_TIMES = 2
+      SEISEN_DICE_SIDES = 6
+
+      # 聖戦判定的判定式：合計 <= DKK（wasshoi.js:43 `dice.sum <= Number(dkk)`）。
+      # 落成常量供测试断言，方法里真的用它做比较，避免"文档写了 <= 代码写了 <"。
+      SEISEN_CMP = :<=
+
+      # ------------------------------------------------------------------
+      # prefixes_pattern 覆写（T1.5）—— **SEISEN 的 S 前缀与引擎暗骰标记冲突**
+      # ------------------------------------------------------------------
+      #
+      # 故障现象：`SEISEN9` 完全不响应（T1.5 实测），但直接调用
+      # eval_game_system_specific_command("SEISEN9") 一切正常。
+      #
+      # 根因（逐步实证，docs/t1.5-report.md §3）：
+      #   上游 base.rb:47 把前缀数组**原样拼进正则**：
+      #     /^(S)?(UH|[KENHU]|SB|WS|WSE|NRS|NSRS|...|SEISEN)/i
+      #   ① 可选的 `(S)?` 是 BCDice 的**暗骰标记**；命中即把命令首字符 S 剥掉
+      #      （base.rb:254-255 `command = command[1..-1] if secret`）。
+      #   ② 正则回溯优先让 `(S)?` 匹配掉 "SEISEN9" 的 S，
+      #      剩下 "EISEN9" 交给前缀组——而 `[KENHU]` 这个字面量被当成
+      #      **字符类**（上游 register_prefix("[KENHU]") 的既有语义），
+      #      其中的 `E` 恰好匹配 "EISEN9" 的首字母 E。
+      #   → 命令变成 "EISEN9"，本类正则全部失配 → 不响应。
+      #   → 顺带说明：`SWSX`/`SNJI` 是**正常**的（父类 WS / 本类 NJI 不以 S 开头，
+      #      `S` 确实是暗骰标记），只有 SEISEN 是"真 S 开头被误吃"。
+      #
+      # 本覆写的做法：在**父类原正则前**追加一个 `SEISEN` 优先分支。
+      #   - `(S)?` 只能吃掉第二个 S：`SSEISEN9` 仍是合法的暗骰命令；
+      #   - 裸 `SEISEN9` 由新分支整体匹配，`m[1]` 为 nil → secret=false，
+      #     命令原样传下去（这才是我们要的）。
+      #
+      # 为什么不用 change_text（上游 NinjaSlayer.rb:82 的惯用法）？
+      #   change_text 的输出会**再经 upcase**，且必须自己把命令改写成能通过
+      #   prefixes_pattern 的形状；为一个前缀写字符串级手术，
+      #   风险高于直接修正前缀正则本身。此处选择更小的作用面。
+      #
+      # ⚠ 副作用审计（已逐条跑过，见 toml 用例）：
+      #   只给 **SEISEN** 这一个前缀新增了"可作为首字符被保护"的能力，
+      #   其余前缀与父类**逐字节同源**（直接展开父类 source，不重新拼），
+      #   故 SB/WSE/NSRS/KR*/NJ* 的 secret 标志行为零变化。
+      #   `[KENHU]` 的字符类怪癖是上游既有行为（父类单独跑也如此），本覆写原样保留。
+      #
+      # 实现注意：父类 @prefixes_pattern 是**实例变量**而非类变量字典，
+      #   但 Ruby 的类实例变量沿继承链各自独立，故这里直接重设本类的
+      #   @prefixes_pattern 即可（父类的缓存不受影响）。
+      def self.prefixes_pattern
+        @prefixes_pattern ||= Regexp.new(
+          "\\A(?:SEISEN|#{super.source})",
+          Regexp::IGNORECASE
+        ).freeze
+      end
+
       # 父类实现的入口覆写（T1.1 / 计划 §15.5 V4 同形写法）。
       #
       # 先匹配本类新命令；未命中一律交给 `super`——父类实现内建
@@ -328,9 +533,110 @@ module BCDice
             (Regexp.last_match[2] || Regexp.last_match[4] || "A"),
             Regexp.last_match[3]
           )
+        when RE_CHARAMAKE
+          # 分组 2 非 nil = 定値表示（不掷骰）；nil = 裸命令（掷骰查表）
+          return proc_chara_make(Regexp.last_match[1].upcase, Regexp.last_match[2])
+        when RE_SEISEN
+          return proc_seisen(Regexp.last_match[1].to_i)
         end
 
         return nil
+      end
+
+      # キャラメイク表を振る（6 表 + `@n` 定値表示）
+      #
+      # 两条互斥路径（见 T1.5 铁律③④）：
+      #   ① fixed_n 非 nil → **定値表示**：不掷骰，直接 items[fixed_n - min_index]。
+      #      天狗 `/fnd <表名>#<出目>`（discord_command/fnd.js）就是这条路，
+      #      消息体只有正文（receiveFixedMessage 只 return '\n\n' + data[n]）。
+      #      ASCII 侧本命令**必须**在正文前自报家门——天狗那条路径不带表名，
+      #      Telegram 侧看到的是裸文本；本扩展输出 `<表名>(<出目>) ＞ <正文>`
+      #      （与 SB@n / proc_nsrs 的呈现风格一致），便于在群里辨认是哪张表。
+      #   ② fixed_n 为 nil → **掷骰查表**：roll_sum(times, sides)，
+      #      items[sum - min_index]。
+      #
+      # 两者共用同一段 items 查找，故「越界 → 不响应」只写一次：
+      #   - 掷骰路径理论不可达（1D6∈[1,6]、1D36∈[1,36]，与 items 长度恒等），
+      #     仍保留守卫：yml 若被手工改短，守卫会让它安静地不响应，而不是
+      #     产出 nil 文本或 IndexError 冒泡（父类 eval 有 rescue，但会吞成
+      #     「语法错误」，掩盖真因）。
+      #   - 定値路径可达（用户可打 @99），这才是守卫的主战场。
+      #
+      # ⚠ 与 proc_karmarond 的**故意**不同（评审预警 1）：
+      #   不钳制、不显示（raw→clamped）标记——本批无 datarange（铁律①）。
+      #
+      # @param key [String] "NJI"/"NJS"/"NJN"/"NJK"/"NJC"/"NJB"
+      # @param fixed_s [String, nil] 定値表示的出目原始串（nil = 掷骰）
+      # @return [String, nil]
+      def proc_chara_make(key, fixed_s)
+        items = translate("NinjaSlayer2Ex.table.#{key}.items")
+
+        if fixed_s.nil?
+          spec = CHARAMAKE_DICE_TYPES[key]
+          return nil if spec.nil?
+
+          sum = @randomizer.roll_sum(spec[:times], spec[:sides])
+          body = items[sum - CHARAMAKE_TABLE_MIN_INDEX]
+          return nil if body.nil?
+
+          return "#{chara_make_table_label(key)}(#{spec[:expr]}) ＞ (#{sum}) ＞ #{body}"
+        end
+
+        # 定値表示。天狗用字符串键直查（NJDiscordReply.js:115），此处已由
+        # 正则挡掉前导零（铁律③），再补上界守卫：`@7`（1D6 表）/ `@37`（1D36 表）
+        # 越界 → 不响应。
+        index = fixed_s.to_i - CHARAMAKE_TABLE_MIN_INDEX
+        body = items[index]
+        return nil if body.nil?
+
+        "#{chara_make_table_label(key)}(#{fixed_s.to_i}) ＞ #{body}"
+      end
+
+      # 聖戦判定を実行する（2D6、合計 <= DKK で成功）
+      #
+      # 天狗 wasshoi.js WasshoiDiceRoll#receiveDiceRoll:40-44 的忠实移植：
+      #   const dice = new Dice('2d6'); dice.diceRoll();
+      #   returnString = kind.judgeName + '!' + ' = ' + dice.toString()
+      #                + ' = ' + dice.sum + '<=' + dkk + '  判定'
+      #                + (dice.sum <= Number(dkk)) ? '成功！' + successMessage : '失敗';
+      #   注意 `dice.toString()` 是 dice.js:109 的 `'(a+b)'` 形式（2 颗骰相加）。
+      #
+      # 返回 Result.success / Result.failure 让 bot 侧能按判定成败做提示；
+      # 天狗侧只是纯字符串（无成败标志），本扩展是**无损放宽**——
+      # 文本逐字一致，额外提供 success/failure 语义。
+      #
+      # @param dkk [Integer] DKK 难度数（正则保证为纯数字，无上界）
+      # @return [Result]
+      def proc_seisen(dkk)
+        dice = @randomizer.roll_barabara(SEISEN_DICE_TIMES, SEISEN_DICE_SIDES)
+        total = dice.sum()
+
+        judge_name = translate("NinjaSlayer2Ex.judge.SEISEN.judge_name")
+        success_message = translate("NinjaSlayer2Ex.judge.SEISEN.success_message")
+        failure_word = translate("NinjaSlayer2Ex.judge.SEISEN.failure_word")
+
+        # 成功语（`成功！`）来自 JSON 的 wasshoi.success_word，成功/失败二选一后
+        # 只在成功分支追加 —— 对齐天狗 `'成功！' + successMessage` 的拼接顺序。
+        success_word = translate("NinjaSlayer2Ex.judge.SEISEN.success_word")
+
+        head = "#{judge_name}! = (#{dice.join('+')}) = #{total}<=#{dkk}  判定"
+        if total <= dkk
+          Result.success("#{head}#{success_word}#{success_message}")
+        else
+          Result.failure("#{head}#{failure_word}")
+        end
+      end
+
+      # キャラメイク表的标签（不带骰型标记）。
+      #
+      # yml 的 name 形如 `初期ジツ系統(1D6) ＞ `，其中 `(1D6)` 是 DiceTable 的
+      # 类型标记。与 nsrs_table_label / karmarond_table_label 同解：
+      # 按第一个 '(' 截断，日文表名逐字来自 yml，不在代码里手写。
+      #
+      # @param key [String]
+      # @return [String]
+      def chara_make_table_label(key)
+        translate("NinjaSlayer2Ex.table.#{key}.name")[/\A[^(]*/]
       end
 
       # カルマロンダリングを振る（5 派阀 × 4 骰型 + `@±x` 補正 + datarange 钳制）
