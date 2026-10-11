@@ -52,14 +52,17 @@ def check_plugin_registration
               "ancestors include? #{BCDice::GameSystem::NinjaSlayer2Ex.ancestors.include?(BCDice::GameSystem::NinjaSlayer2)}"]
 
   # T1.1 原断言是「子类 prefixes == 父类 prefixes」，当时子类一个新前缀都不加。
-  # T1.3 起 Ex 类按设计追加 NSRS/SBX/WSX，故改为**超集**断言：
+  # T1.3 起 Ex 类按设计追加 NSRS/SBX/WSX，T1.4 再追加 KRS/KRZ/KRA/KRO/KRY，
+  # 故改为**超集**断言：
   #   父类全量前缀仍是子类前缀的前缀序列（证明 register_prefix_from_super_class
   #   仍然生效——父命令不会因子类扩展而丢失），且新增前缀确实在类体内注册成功
   #   （证明 register_prefix 追加在冻结前完成）。
   parent_prefixes = BCDice::GameSystem::NinjaSlayer2.prefixes
   ex_prefixes = BCDice::GameSystem::NinjaSlayer2Ex.prefixes
   inherited_ok = ex_prefixes[0, parent_prefixes.size] == parent_prefixes
-  ex_added = %w[NSRS SBX WSX]
+  # T1.4 追加 5 派阀前缀——此清单是「本扩展主动注册了什么」的硬编码登记，
+  # 每加一个前缀**必须**同步（kimi-code T1.3 评审提醒）。
+  ex_added = %w[NSRS SBX WSX KRS KRZ KRA KRO KRY]
 
   results << ["① prefixes 含父类全量前缀且新增前缀已注册（父类前缀为子类前缀的前缀序列；regex 门槛由 runner command_pattern 断言覆盖）",
               BCDice::GameSystem::NinjaSlayer2 == BCDice::GameSystem::NinjaSlayer2Ex.superclass &&

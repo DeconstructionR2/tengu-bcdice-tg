@@ -22,7 +22,11 @@ require "rake/testtask"
 Rake::TestTask.new(:default) do |t|
   t.libs << "test"
   t.libs << "."
-  t.test_files = FileList["test/test_ext_game_system_commands.rb", "test/i18n_guard_test.rb"]
+  t.test_files = FileList[
+    "test/test_ext_game_system_commands.rb",
+    "test/i18n_guard_test.rb",
+    "test/karmarond_semantics_test.rb",
+  ]
   t.warning = false
   t.verbose = false
 end
