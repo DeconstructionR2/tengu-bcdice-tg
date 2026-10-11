@@ -207,11 +207,58 @@ module TelegramBot
     # 发送到话题内的指定用户（暗骰用）。ephemeral 特性：
     #   - bot 为管理员时随时可发；非管理员须在触发后 15 秒内（§0.2.4）
     #   - 用户离线不保证送达（§12 R6）→ 由 T3.1 的 secrets 持久化兜底
-    def send_ephemeral(chat_id, text, user_id:, thread_id: nil)
+    #
+    # **extra 透传**（T3.1）：暗骰要挂内联「公开」按钮，故 `reply_markup`
+    # 等标准 sendMessage 参数必须能原样透传。gem 白名单只拦方法名不校验参数
+    # （见文件头），reply_markup 会经 jsonify_value → to_json 变成 Bot API
+    # 要的 inline_keyboard 形状。
+    def send_ephemeral(chat_id, text, user_id:, thread_id: nil, **extra)
       send_one(chat_id,
                text,
                thread_id: thread_id,
-               ephemeral_message_parameters: { receiver_user_id: user_id })
+               ephemeral_message_parameters: { receiver_user_id: user_id },
+               **extra)
+    end
+
+    # ----------------------------------------------------------------------
+    # 1b. 按钮回调应答（T3.1：answerCallbackQuery）
+    # ----------------------------------------------------------------------
+
+    # 应答一次按钮回调。
+    #
+    # **不答则用户客户端一直转圈**（计划 §8 T3.1 前置注记），故 bot 的任何
+    # 按钮路径都必须走到这里——包括「不认识的 data」与「handler 抛异常」
+    # 两种兜底（那两种只需要一个空的应答即可让客户端收手）。
+    #
+    # 三条实现决定：
+    #   1. **不过配速**：answerCallbackQuery 不计入群消息速率，按消息计的
+    #      RateLimiter 对它是纯开销（且它通常要抢在用户等待之前发出）。
+    #   2. **不过切段**：toast 文本上限远小于 4096，text 过长会被服务端截断，
+    #      本层不代为裁剪（handler 侧的文案是写死的短句）。
+    #   3. **降级同 send_one**：仅当 gem 白名单缺该端点（receiver == api 本体）
+    #      才走 raw_api_call，其余异常原样抛出。
+    #
+    # @param callback_query_id [String] 被按下的那个 query 的 id（必填）
+    # @param text [String, nil] 客户端 toast 文本；nil = 空应答（只是收手）
+    # @param alert [Boolean] true = 弹窗式提示（用于「无权限」这类需要看见的拒绝）
+    # @return [Object] gem 的响应（Bool）
+    def answer_callback_query(callback_query_id:, text: nil, alert: false)
+      id = callback_query_id.to_s
+      raise ArgumentError, "callback_query_id 不能为空" if id.empty?
+
+      params = { callback_query_id: id }
+      params[:text] = text if text && !text.to_s.empty?
+      params[:show_alert] = true if alert
+
+      begin
+        @api_client.api.answer_callback_query(**params)
+      rescue NoMethodError => e
+        raise unless gem_endpoint_missing?(e)
+
+        raw_api_call("answerCallbackQuery", params)
+      rescue Telegram::Bot::Exceptions::ResponseError => e
+        raise SendError, format_send_error(e, params)
+      end
     end
 
     # 发送文档（跑团 log 导出，T3.5 用）

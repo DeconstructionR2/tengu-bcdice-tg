@@ -105,7 +105,11 @@ module TelegramBot
       UNKNOWN_COMMAND = "当前规则系统不接受这个命令。换 /system <系统ID> 可切换规则系统。"
 
       # 暗骰（S 前缀）提示（slash 轨专用；**绝不含结果**；辅助轨静默）
-      SECRET_NOT_SUPPORTED = "暗骰（S 前缀）结果不公开显示——/secret 命令将于后续版本提供。"
+      #
+      # T3.1 后 /secret 已真实现（T3.1 落 bot/handlers/secret_dice.rb），本提示
+      # 改为**指路**而非「将于后续版本提供」——文案陈旧会让用户以为 /secret 不能用。
+      # 回发规则一字未改：结果文本永远不在这条路径上。
+      SECRET_NOT_SUPPORTED = "暗骰（S 前缀）的结果不会在这里显示——请用 /secret <骰式>（只有你自己看得到）。"
 
       # 无参 /system
       SYSTEM_USAGE = "用法：/system <规则系统ID> 切换；在话题内执行只改本话题。"

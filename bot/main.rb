@@ -2,19 +2,29 @@
 
 # ============================================================================
 # bot/main.rb — 入口（T2.1 起 / T2.3 接入路由 / T2.4 挂真 handler / T2.5 挂 migration
-#              / T2.6 挂 /settings + 管理员助手 + 辅助轨开关持久化）
+#              / T2.6 挂 /settings + 管理员助手 + 辅助轨开关持久化
+#              / T3.1 挂暗骰 /secret + 按钮回调路由）
 #
 # 本文件保证 `bundle exec ruby bot/main.rb` 能起：
 #   1. 加载引擎（lib/engine_bootstrap.rb —— 与测试/spike 共用同一初始化序列）；
 #   2. 解析 token（bot/config.rb，绝不打印值）；
 #   3. 建 TelegramApi，setMyCommands 注册主轨菜单；
-#   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨）并挂 handler；
+#   4. 建 Router（slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支）并挂 handler；
 #   5. 起长轮询。
 #
-# 已挂的 handler（T2.6 收官 Phase 2）：
-#   /start /help(静默待做) /settings /roll /nd /system + 辅助轨（裸 ASCII）
+# 已挂的 handler（T3.1 起）：
+#   /start /help /settings /roll /nd /system /secret + 辅助轨（裸 ASCII）
+#   + **:callback_query**（暗骰「公开」按钮）
 #   **尚无 handler**（按 router 静默策略不回复，等 T3.x 逐个填）：
-#   secret / bank / ct / log
+#   bank / ct / log（各自挂 PendingHandler 占位）
+#
+# T3.1 范围纪律（暗骰）：
+#   - Secrets 落库走 **写入时惰性 TTL 清理**（7 天），**不建定时任务**——
+#     单进程长轮询没有调度器，为一天几次的表引入常驻执行路径不值得；
+#   - handler **恒返回 nil**：结果只能经 send_ephemeral 出，一返回 String
+#     router 就会代发进群（暗骰的命门）；
+#   - 「公开」按钮经 router 的 callback 分支：先 answerCallbackQuery、
+#     只认本人（secrets.user_id == query.from.id）、**公开成功后删行**（E5）。
 #
 # T2.6 范围纪律：
 #   - aux_enabled **已持久化**：读群级 chat_settings.aux_enabled（schema.sql
@@ -48,6 +58,7 @@ require_relative "admin"
 require_relative "handlers/dice"
 require_relative "handlers/settings"
 require_relative "handlers/help"
+require_relative "handlers/secret_dice"
 require_relative "migration"
 require_relative "../db/connection"
 require_relative "../lib/engine_bootstrap"
@@ -98,11 +109,12 @@ bot_username =
     nil
   end
 
-puts "[T2.6] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
-puts "[T2.6] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
-puts "[T2.6] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨（辅助轨按群持久化）"
-puts "[T2.6] 已挂 handler：/start /help /settings /roll /nd /system + 辅助轨" \
-     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb）；secret/bank/ct/log 占位应答待 T3.x"
+puts "[T3.1] 天狗骰子 bot 启动中…（token_key=#{TelegramBot::Config.token_key}，值不打印）"
+puts "[T3.1] 主轨菜单已注册：#{TelegramBot::TelegramApi.commands_payload.map { |c| "/#{c['command']}" }.join(' ')}"
+puts "[T3.1] @username=#{bot_username.inspect}；路由=slash 主轨 + 裸 ASCII 辅助轨 + 按钮回调分支"
+puts "[T3.1] 已挂 handler：/start /help /settings /roll /nd /system /secret(暗骰) + 辅助轨" \
+     "（bot/handlers/dice.rb + handlers/settings.rb + handlers/help.rb + handlers/secret_dice.rb）；bank/ct/log 占位应答待 T3.x"
+puts "[T3.1] 暗骰：结果落 secrets 表（TTL 7 天惰性清理），「公开」按钮 = callback 分支 + 本人校验 + 公开后删行"
 puts "[T2.6] 群升级 re-key 已挂（bot/migration.rb，5 表事务 + chat_id_aliases 审计）"
 puts "[T2.6] 管理员助手已挂（bot/admin.rb，getChatMember；查询失败 fail-closed）"
 
@@ -134,6 +146,14 @@ end
 settings = TenguDB::Settings.new(dice_db)
 dice = TelegramBot::Handlers::DiceHandler.new(settings: settings)
 
+# T3.1：暗骰。与 DiceHandler / SettingsHandler **共用同一 Connection**（单连接
+# 纪律，§3 决9）——Secrets 只新建一个对象，但底层句柄是同一个。
+# 注意 Secrets 的 TTL 清理走「每次写入顺手删」，故它本身不持有常驻资源。
+secrets_store = TenguDB::Secrets.new(dice_db)
+secret_dice = TelegramBot::Handlers::SecretDiceHandler.new(
+  settings: settings, secrets: secrets_store
+)
+
 # T2.6：管理员助手（getChatMember 的唯一实现）。**只构造一个实例**并注入
 # SettingsHandler —— 缓存要跨消息复用，handler 各建一个就等于没有缓存。
 # T3.4 的自定义表改表权限会复用同一个对象（计划 §5）。
@@ -149,11 +169,11 @@ router = TelegramBot::Router.new(
               # 菜单里有的命令没 handler = 用户视角「bot 死了」；菜单外的
               # 未知 slash 仍一律静默）。
               help: TelegramBot::Handlers::HelpHandler.new,
-              secret: TelegramBot::Handlers::PendingHandler.new(feature: "暗骰 /secret"),
               bank: TelegramBot::Handlers::PendingHandler.new(feature: "天狗银行 /bank"),
               ct: TelegramBot::Handlers::PendingHandler.new(feature: "自定义表 /ct"),
               log: TelegramBot::Handlers::PendingHandler.new(feature: "跑团 log /log") }
                 .merge(TelegramBot::Handlers::DiceHandler.registry(dice))
+                .merge(TelegramBot::Handlers::SecretDiceHandler.registry(secret_dice))
                 .merge(TelegramBot::Handlers::SettingsHandler.registry(settings_handler)),
   bot_username: bot_username,
   # 辅助轨开关（T2.6：**已持久化**）。读群级 chat_settings.aux_enabled，

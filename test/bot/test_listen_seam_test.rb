@@ -173,4 +173,64 @@ class TestListenSeam < Minitest::Test
 
     assert_equal ["SB"], seen
   end
+
+  # ==========================================================================
+  # T3.1 接缝：按钮回调经 **gem 真实 yield 形状** 走到公开分支
+  #
+  # 上面的两条钉「回调不得触发消息路由」——那是 T2.6 的守卫。T3.1 起回调
+  # **有了正式路由分支**，故这里补上正向的一半：同一个真实形状（listen yield
+  # CallbackQuery 本体）现在必须到达 :callback_query handler，并带上
+  # query.id / data / from 三样 handler 赖以工作的字段。
+  #
+  # 假 handler 只**记录 context**，不碰 DB/引擎——本文件验的是边界形状
+  # （gem 产出的字段能不能喂饱 handler），不是业务语义。
+  # ==========================================================================
+
+  def test_callback_query_reaches_callback_handler_via_gem_shape
+    cq = gem_shaped_callback_query(attached_text: "SB")
+    api, router, fake_api = build_router_with_listen_client([cq])
+    answers = []
+    seen = nil
+    router.register(:callback_query) do |ctx|
+      seen = ctx
+      ctx[:answer_callback_query].call("ok", alert: true)
+      nil
+    end
+
+    api.start(dispatch: router)
+
+    refute_nil seen, "CallbackQuery 必须到达 :callback_query handler（T3.1 的正式分支）"
+    assert_equal "q1", seen[:callback_query].id, "handler 需要 query.id 去应答"
+    assert_equal "reveal:abc", seen[:data], "handler 需要 data 定位记录"
+    assert_equal 42, seen[:user_id], "handler 需要 from.id 做本人校验"
+    refute_nil seen[:answer_callback_query], "handler 必须拿到幂等的应答通道"
+    assert_empty fake_api.sent_messages, "回调路径本身不发消息"
+  end
+
+  def test_callback_query_answer_goes_through_telegram_api
+    cq = gem_shaped_callback_query(attached_text: "SB")
+    api, router, = build_router_with_listen_client([cq])
+    router.register(:callback_query) { |ctx| ctx[:answer_callback_query].call("已公开。"); nil }
+
+    api.start(dispatch: router)
+
+    # build_router_with_listen_client 用的是 BotTestHelper::FakeApi
+    assert_equal 1, router.instance_variable_get(:@api).api_client.api.answered.size,
+                 "默认应答通道必须真的发出 answerCallbackQuery"
+    answered = router.instance_variable_get(:@api).api_client.api.answered.first
+    assert_equal "q1", answered[:callback_query_id]
+    assert_equal "已公开。", answered[:text]
+  end
+
+  def test_callback_query_with_no_handler_still_answers
+    # 「未注册 handler」时客户端照样在转圈 —— 必须照答（warn 由 logger 收）
+    cq = gem_shaped_callback_query(attached_text: "SB")
+    api, router, = build_router_with_listen_client([cq])
+
+    api.start(dispatch: router)
+
+    answers = router.instance_variable_get(:@api).api_client.api.answered
+    assert_equal 1, answers.size, "没有 callback handler 也必须应答（否则按钮转圈到天荒地老）"
+    assert_equal "q1", answers.first[:callback_query_id]
+  end
 end

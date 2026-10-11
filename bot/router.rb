@@ -266,6 +266,10 @@ module TelegramBot
     # @param migration [#call, nil] 群升级 re-key 处理器（T2.5）。签名
     #   `call(chat_id:, migrate_to:, migrate_from:)`，返回 nil 或 Result。
     #   nil = 未注入 → 迁移消息安静跳过（并 warn 一次/条），不崩。
+    # @param answer_callback [#call, nil] 按钮回调的应答通道（T3.1）。
+    #   签名 `answer_callback.call(query_id, text = nil, alert: false)`；nil = 用
+    #   注入的 api（@api.answer_callback_query）。**必须有**：不答则用户客户端
+    #   一直转圈（计划 §8 T3.1 前置注记），而本层拿不到别的兜底通道。
     # @param logger [#warn] 日志器（只记结构性信息）
     def initialize(api:,
                    handlers: {},
@@ -273,6 +277,7 @@ module TelegramBot
                    bot_username: nil,
                    aux_systems: nil,
                    migration: nil,
+                   answer_callback: nil,
                    logger: $stderr)
       @api = api
       @handlers = handlers.dup
@@ -281,6 +286,7 @@ module TelegramBot
       @logger = logger
       @aux_systems = aux_systems
       @migration = migration
+      @answer_callback = answer_callback || method(:default_answer_callback)
       @aux_pattern = AuxMatcher.build_pattern(aux_systems || self.class.default_systems)
     end
 
@@ -332,8 +338,15 @@ module TelegramBot
     end
     alias dispatch call
 
-    # 主流程：取消息 → 跳服务/非文本 → 解析轨 → 命中则分发。
+    # 主流程：先分流按钮回调 → 取消息 → 跳服务/非文本 → 解析轨 → 命中则分发。
+    #
+    # **按钮回调必须先于 extract_message**（T3.1）：extract_message 显式跳过
+    # CallbackQuery 形状（否则按一次「公开」会被当成「原消息被重发」二次路由，
+    # 原消息文本若恰好是骰式就会白掷一次骰，见 extract_message 的注释）。回调
+    # 分支从 update 上直接取 CallbackQuery 本体，不经过那条守卫。
     def dispatch(update)
+      return dispatch_callback_query(update) if callback_query_shaped?(update)
+
       message = extract_message(update)
       return nil if message.nil?
 
@@ -365,6 +378,67 @@ module TelegramBot
       # --- 辅助轨裸 ASCII 骰式 ---
       handle_aux(text, chat_id: chat_id, thread_id: thread_id,
                           message: message, chat_type: chat_type_of(chat))
+    end
+
+    # ------------------------------------------------------------------
+    # 按钮回调路由（T3.1，计划 §8 T3.1 前置注记）
+    # ------------------------------------------------------------------
+
+    # CallbackQuery → 交给 :callback_query handler，并在 context 里备好**幂等**的
+    # 应答闭包（先答后干活，见 bot/handlers/secret_dice.rb 的纪律 2）。
+    #
+    # 三条硬要求（缺一即返工）：
+    #   1. **必须调 answerCallbackQuery**，否则用户客户端一直转圈；
+    #   2. **先答后干活**：应答是一次网络往返，而 handler 要落库 + 发消息，
+    #      慢得多；先答能把客户端的等待压到最短；
+    #   3. **兜底也要答**：handler 抛异常被 rescue 吞掉时（run_handler 的既有
+    #      纪律：不杀循环），客户端不会永远转圈——此处补一次兜底应答。
+    #
+    # 「未注册 :callback_query handler」不静默：warn 一次/条（缺依赖要可见），
+    # 并**照答**（否则用户对着一个不转圈的按钮毫无反馈）。
+    #
+    # @return [Object, nil] handler 的返回值；无 handler 时 nil
+    def dispatch_callback_query(update)
+      query_id = query_id_of(update)
+      data = update.respond_to?(:data) ? update.data : nil
+      answered = false
+      answer = lambda do |text = nil, alert: false|
+        next if answered
+
+        answered = true
+        answer_callback_query(query_id, text, alert: alert)
+      end
+
+      handler = @handlers[:callback_query]
+      if handler.nil?
+        warn_line("[router] 未注册 :callback_query handler，按钮回调被忽略" \
+                  "（构造 Router 时应注册，data=#{data.inspect}）")
+        answer.call
+        return nil
+      end
+
+      run_handler(:callback_query, handler, command: nil,
+                                      chat_id: nil, thread_id: nil,
+                                      message: nil, chat_type: nil,
+                                      callback_query: update, answer_callback_query: answer)
+    ensure
+      # handler 抛异常 → run_handler 已 rescue 并 warn；此处补答，让客户端收手
+      answer_callback_query(query_id, nil) unless answered
+    end
+
+    # 真的发 answerCallbackQuery（默认走注入的 api；可被 answer_callback: 替换）
+    #
+    # **只在 query_id 存在时发**：gem 的 CallbackQuery#id 是必填，但测试假身与
+    # 未来形态可能缺——没有 id 的应答会被服务端以 400 拒，发了只是徒增噪音。
+    # 失败只 warn 不抛：应答失败不该让整条回调路径炸掉。
+    def answer_callback_query(query_id, text = nil, alert: false)
+      return nil if query_id.nil? || query_id.to_s.empty?
+
+      @answer_callback.call(query_id, text, alert: alert)
+      nil
+    rescue StandardError => e
+      warn_line("[router] answerCallbackQuery 失败：#{e.class}")
+      nil
     end
 
     # ------------------------------------------------------------------
@@ -490,7 +564,8 @@ module TelegramBot
     # 错误兜底：handler 抛异常 → warn + 继续（不杀循环）。日志**只记结构性
     # 信息**（轨/命令/chat_id/异常类），**绝不记用户正文**。
     def run_handler(kind, handler, command:, chat_id:, thread_id:, message:,
-                    text: nil, chat_type: nil)
+                    text: nil, chat_type: nil, callback_query: nil,
+                    answer_callback_query: nil)
       context = {
         router: self,
         api: @api,
@@ -501,9 +576,14 @@ module TelegramBot
         text: text,
         chat_id: chat_id,
         thread_id: thread_id,
-        user_id: user_id_of(message),
+        user_id: user_id_of(message) || user_id_of(callback_query),
         chat_type: chat_type,
         message: message,
+        callback_query: callback_query,
+        # 回调数据单独摊平到 context（handler 不必自己去摸 callback_query 对象的
+        # 字段——测试假身/gem 形态差别就集中在这一个入口上）
+        data: callback_query.respond_to?(:data) ? callback_query.data : nil,
+        answer_callback_query: answer_callback_query,
       }
 
       result = handler.call(context)
@@ -620,6 +700,29 @@ module TelegramBot
     def user_id_of(message)
       from = message.respond_to?(:from) ? message.from : nil
       from&.id&.to_i
+    end
+
+    # CallbackQuery 的 id（answerCallbackQuery 必填；gem 形态是 String）
+    #
+    # 不响应 id 的对象一律 nil → answer_callback_query 短路不发（见该方法注释）
+    def query_id_of(obj)
+      return nil unless obj.respond_to?(:id)
+
+      value = obj.id
+      value.nil? || value.to_s.empty? ? nil : value
+    end
+
+    # 默认的 answerCallbackQuery 通道：走注入的 TelegramApi。
+    #
+    # 本层**不发消息、只答回调**，故不经过 send_text 的切段/配速/thread 逻辑
+    # （那些对一条 toast 是纯开销；而配速限流是按消息计的，answerCallbackQuery
+    # 不计入群消息速率）。
+    def default_answer_callback(query_id, text = nil, alert: false)
+      params = { callback_query_id: query_id }
+      params[:text] = text if text && !text.to_s.empty?
+      params[:show_alert] = true if alert
+
+      @api.answer_callback_query(**params)
     end
 
     # 入站 chat.type 原值（T2.6：handler 判「私聊豁免 / 群里要管理员」）。

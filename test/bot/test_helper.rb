@@ -79,12 +79,13 @@ module BotTestHelper
 
   # 假 api client：只记录调用的方法名与参数，**不碰网络**
   class FakeApi
-    attr_reader :sent_messages, :registered_commands, :documents
+    attr_reader :sent_messages, :registered_commands, :documents, :answered
 
     def initialize(raise_on: nil)
       @sent_messages = []
       @registered_commands = nil
       @documents = []
+      @answered = []
       @raise_on = raise_on # {method_name => Exception} 用于测降级
     end
 
@@ -107,6 +108,14 @@ module BotTestHelper
 
       @documents << params
       :fake_document
+    end
+
+    # T3.1：按钮回调应答。不答则用户客户端一直转圈，故假身必须记下来。
+    def answer_callback_query(**params)
+      raise @raise_on[:answer_callback_query] if @raise_on&.key?(:answer_callback_query)
+
+      @answered << params
+      true
     end
   end
 
