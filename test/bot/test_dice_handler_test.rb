@@ -462,12 +462,18 @@ class TestDiceHandlerRouting < Minitest::Test
     assert_includes sent_texts.last, "ジツ拡張"
   end
 
+  # 本 Router 只注册了 DiceHandler.registry（roll/nd/system/aux）。
+  # 名单只留「**在本注册表里没有 handler**」的命令 —— /secret、/bank、/settings、
+  # /help 自 T3.1/T3.2 起都有真 handler（挂在 main.rb 的完整注册表上），
+  # 把它们列进来会让本用例的语义随版本漂移、且名不副实。
+  # /ct、/log 仍是 PendingHandler 占位（挂不挂都静默），故这里也放行。
   def test_unregistered_commands_stay_silent
     %w[/secret SB2 /bank /ct /log /settings /help].each do |text|
       @router.dispatch(update(text: text))
     end
 
-    assert_empty sent_texts, "尚无 handler 的命令应保持静默（T2.4 范围纪律）"
+    assert_empty sent_texts,
+                 "本注册表只有 dice 键：其余命令一律静默（未注册 → 不抢话，§12 R4）"
   end
 
   # 超长输出：handler **不截断**（它只交字符串），由 TelegramApi 的 Chunker

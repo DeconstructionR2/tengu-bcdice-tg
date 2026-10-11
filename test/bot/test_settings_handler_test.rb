@@ -476,11 +476,14 @@ class TestSettingsHandlerRouting < Minitest::Test
 
   # --- 静默纪律不变 -------------------------------------------------------
 
+  # 本注册表只有 settings/dice 键；名单列的都是**在这里没有 handler** 的命令。
+  # /secret（T3.1）与 /bank（T3.2）自各自任务起已是真 handler（挂在 main.rb 的
+  # 完整注册表上），不在此名单——写进来会让本用例语义随版本漂移。
   def test_other_unregistered_commands_stay_silent
     %w[/secret /bank /ct /log /help].each do |text|
       @router.dispatch(update(text: text))
     end
 
-    assert_empty sent_texts, "T2.6 范围外命令仍应静默（等 T3.x）"
+    assert_empty sent_texts, "本注册表没有的键一律静默（未注册 → 不抢话）"
   end
 end

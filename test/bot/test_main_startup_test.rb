@@ -52,6 +52,7 @@ class TestMainStartup < Minitest::Test
       require #{File.join(REPO, "bot/admin").inspect}
       require #{File.join(REPO, "bot/handlers/dice").inspect}
       require #{File.join(REPO, "bot/handlers/settings").inspect}
+      require #{File.join(REPO, "bot/handlers/bank").inspect}
       require #{File.join(REPO, "lib/engine_bootstrap").inspect}
 
       $SENT = []
@@ -287,6 +288,71 @@ class TestMainStartup < Minitest::Test
       assert_equal [[0, 1]], aux, "aux_enabled 应落在群级行(thread_id=0)"
       assert_equal [["NinjaSlayerEx"]], game,
                    "改辅助轨不得影响该群的规则系统设置"
+    end
+  end
+  # T3.2 的接线闭环：**经 bot/main.rb 的真实接线**跑一遍天狗银行全流程。
+  # 验的是「菜单上架的 /bank 真的有 handler 且真的会落库」（T2.6 真机教训：
+  # 菜单里有的命令没 handler = 用户视角 bot 死了），而不是 handler 的语义
+  # （那由 test/bot/test_bank_handler_test.rb 负责）。
+  def test_startup_wires_bank_handler_end_to_end
+    Dir.mktmpdir("tengu-t3.2-main") do |dir|
+      db_path = File.join(dir, "tengu.db")
+      chat_id = -1_000_000_000_123_456_789
+
+      def update_src(n, text, chat_id, thread_id: nil)
+        head = <<~RUBY.strip
+          Telegram::Bot::Types::Update.new(update_id: #{n}, message: Telegram::Bot::Types::Message.new(
+            message_id: #{n}, date: 1_700_000_000,
+            chat: { id: #{chat_id}, type: "supergroup" },
+            from: { id: 1, is_bot: false, first_name: "T" }, text: "#{text}"#{thread_id ? ", message_thread_id: #{thread_id}" : ""}))
+        RUBY
+        head
+      end
+
+      updates = [
+        update_src(1, "/bank deposit 893", chat_id, thread_id: 88),
+        update_src(2, "/bank item add 茶", chat_id, thread_id: 88),
+        update_src(3, "/bank balance", chat_id, thread_id: 88),
+        update_src(4, "/bank balance", chat_id, thread_id: 99),
+        update_src(5, "/bank reset", chat_id, thread_id: 88)
+      ].join(",\n")
+
+      shim = File.join(dir, "shim_bank.rb")
+      File.write(shim, shim_source(db_path).sub("$UPDATES = []", "$UPDATES = [\n#{updates}\n]"))
+
+      sent_file = File.join(dir, "sent.json")
+      out = IO.popen(
+        { "BUNDLE_GEMFILE" => File.join(REPO, "Gemfile") },
+        ["bundle", "exec", "ruby", shim],
+        err: %i[child out],
+        chdir: REPO
+      ) { |io| io.read }
+
+      assert File.exist?(sent_file), "子进程应写出记录（实际输出：#{out[0, 600]}）"
+      sent = JSON.parse(File.read(sent_file)).fetch("sent")
+      texts = sent.map { |m| m["text"] }
+
+      assert_equal 5, texts.size,
+                   "/bank 五条都应有应答，菜单上架命令不许静默：#{texts.inspect}"
+      assert_includes texts[0], "893", "存钱应答应含金额"
+      assert_includes texts[0], "👺", "893 彩蛋应经真实接线生效"
+      assert_includes texts[1], "茶", "存道具应答应含道具名"
+      assert_includes texts[2], "当前状况", "话题内查账有账"
+      assert_includes texts[2], "893", "余额正确"
+      assert_includes texts[3], "没有找到银行的记录",
+                      "话题 99 从没存过，应答「查无此账」（话题级隔离）"
+      assert_includes texts[4], "已重置", "清零应答"
+      assert_equal 88, sent[2]["message_thread_id"], "thread 应逐条透传"
+      refute_includes out, "FakeTokenForUnitTests", "日志不得回显 token 值"
+
+      # 落库：话题 88 的账被清空后应只剩「无流水/无道具」的行或干脆无行
+      require "sqlite3"
+      conn = SQLite3::Database.new(db_path)
+      rows = conn.execute(
+        "SELECT chat_id, thread_id, sum_money FROM bank_record ORDER BY thread_id"
+      )
+      conn.close
+      assert_empty rows, "结算后清零应真的删掉话题 88 那一行：#{rows.inspect}"
     end
   end
 end
