@@ -160,6 +160,21 @@ class TestDiceHandler < Minitest::Test
     assert_nil out, "辅助轨遇到引擎 nil 必须静默（防抢话，§12 R4）"
   end
 
+  # --- 暗骰（S 前缀）绝不公开回发（kimi T2.4 评审必修）----------------------
+
+  def test_slash_secret_roll_returns_notice_without_result
+    out = @handler.call(ctx(name: "roll", args: "S2d6", text: "S2d6"))
+
+    assert_equal TelegramBot::Handlers::DiceHandler::SECRET_NOT_SUPPORTED, out
+    refute_match(/\d+\s*＞|\[\d/, out, "提示文案不得含任何骰值/出目")
+  end
+
+  def test_aux_secret_roll_is_silent
+    out = @handler.call(ctx(text: "S2d6"))
+
+    assert_nil out, "辅助轨暗骰必须静默（结果绝不公开回发）"
+  end
+
   def test_aux_silent_for_empty_text
     assert_nil @handler.call(ctx(text: nil))
     assert_nil @handler.call(ctx(text: "   "))

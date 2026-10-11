@@ -469,5 +469,7 @@ module TelegramBot
   # 异常
   # --------------------------------------------------------------------------
   class SendError < StandardError; end
+  # message 含截断 300 字的 API 响应体（truncate_for_log）——**任何日志只准打
+  # e.class，不准打 e.message**（kimi T2.4 评审：安全靠调用点自觉维持，故在此立约）。
   class RawApiError < StandardError; end
 end

@@ -104,6 +104,9 @@ module TelegramBot
       # 引擎不接受该命令时的提示（slash 轨专用；辅助轨静默）
       UNKNOWN_COMMAND = "当前规则系统不接受这个命令。换 /system <系统ID> 可切换规则系统。"
 
+      # 暗骰（S 前缀）提示（slash 轨专用；**绝不含结果**；辅助轨静默）
+      SECRET_NOT_SUPPORTED = "暗骰（S 前缀）结果不公开显示——/secret 命令将于后续版本提供。"
+
       # 无参 /system
       SYSTEM_USAGE = "用法：/system <规则系统ID> 切换；在话题内执行只改本话题。"
 
@@ -249,6 +252,17 @@ module TelegramBot
           return nil if silent
 
           return UNKNOWN_COMMAND
+        end
+
+        # **暗骰结果绝不公开回发**（kimi T2.4 评审必修，实测复现过）：
+        # BCDice 把 S 前缀当暗骰标记（base.rb:254-267 置 secret?=true），
+        # 而 router 闸门显式放行 S 前缀 → 不拦的话 `S2d6` 结果会广播进群。
+        # 真正的暗骰走 /secret（ephemeral，T3.1）；在那之前：
+        # slash 轨回一句**不含结果**的提示；辅助轨静默（nil）。
+        if result.respond_to?(:secret?) && result.secret?
+          return nil if silent
+
+          return SECRET_NOT_SUPPORTED
         end
 
         text_out = result.respond_to?(:text) ? result.text.to_s : result.to_s
