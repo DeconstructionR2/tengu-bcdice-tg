@@ -22,7 +22,7 @@
 | 备份目录 | `/opt/backups/<project>/` | `tengu-YYYYMMDD.db` ×7；属主 <deploy-user>、mode 700 |
 | 备份互斥锁 | `/opt/<project>/.backup.lock` | `scripts/backup.sh` 的 flock 自互斥（env `TENGU_BACKUP_LOCK` 可覆盖） |
 | 备份日志 | `/opt/<project>/backup.log` | cron 追加重定向（脚本自身不投递，见 §4.1）；**日志是时间序列：判断「今日是否已备」以 /opt/backups 实物为准，日志只作旁证** |
-| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 303MB（2026-10-12 实测 `e8fe36d2c172`；早前记的 88.3MB 是 T4.1 首建值，已过时）；tag 纪律见 §1.4 |
+| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 303MB（2026-10-12 实测，三 tag 同体积）；tag 纪律见 §1.4 |
 | 容器名 | `tengu-bcdice-tg` | T4.5 已上线，**在跑**（`unless-stopped`）；曾现 429 重启循环（RestartCount=10），2026-10-12 修复，见 §5.1 |
 | 证据目录 | `/opt/<project>/t4.1-evidence/`、`t4.2-evidence/` | 构建/冒烟/备份验证日志（机器本地，不入库） |
 | 健康监控脚本 | `<agent-home>/scripts/server-health-check.sh` | 检查项 7 = 备份新鲜度（T4.2 登记，§4.1） |
@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 796）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 814）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
@@ -112,9 +112,12 @@ sudo docker run -d \
 sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 ```
 
-当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
-`tengu-bcdice-tg:t4.1-20261012`（首版）、`tengu-bcdice-tg:t4.1-20261012-fixes`
-（T4.1-review 修订版，`latest` 当前指向它）。二者指向不同镜像 ID，均保留供 T4.5 使用。
+当前保存的 tag（2026-10-12 二次实测 `sudo docker images`，会随版本演进）：
+`tengu-bcdice-tg:t4.1-20261012`（首版 `3046c75a16bc`）、
+`tengu-bcdice-tg:t4.1-20261012-fixes`（T4.1-review 修订版 `e8fe36d2c172`，同
+`rollback-20261012`）、`tengu-bcdice-tg:rollback-20261012`（429 修复前的回滚
+锚点）。`latest` 现指向 T4.5-fix 新镜像（`2b7e058d799f`，429 瞬态链修复版，
+§5.1）。
 
 ### 1.5 部署后验证（T4.5 上线时执行）
 
@@ -326,7 +329,7 @@ sudo docker image prune -f           # 换版构建后回收中间层（T4.1 实
 | 症状 | 排查/处置 | 出处 |
 |---|---|---|
 | 群里零反应，容器 `running` | `docker logs --tail 200`：有启动序列行吗？无 → 容器在崩溃循环（看 `ps -a` 状态与 `RestartCount`，排 §4.3）；有 → 查 409（§5）与 DB 锁 | t4.1 §5 |
-| **菜单没注册上**（客户端菜单缺命令/点了没反应） | 启动日志应含「[T3.1] 主轨菜单已注册：…」；缺它 = `register_main_commands` 失败 → 启动**裸退 exit 1**（不会带病长轮询）。日志看「[T2.4] 注册主轨菜单失败」行，常见=token 无效/属于另一个 bot/网络不通；核对 `.env` 的 `token_key` 分支（`TENGU_ENV`）后重启 | `bot/main.rb` L113-126、`bot/config.rb` |
+| **菜单没注册上**（客户端菜单缺命令/点了没反应） | 启动日志应含「[T3.1] 主轨菜单已注册：…」；缺它 = `register_main_commands` 失败。2026-10-12 起瞬态故障（429/5xx/网络）先退避重试 10 次（约 4.5 分钟，日志行 `[telegram_api] 注册主轨菜单遇瞬态故障`），耗尽或非瞬态才 exit 1——日志看「[T2.4] 注册主轨菜单失败」的**分码**行：401/404=token 无效或属于另一个 bot；429=限流风暴；409=双轮询（§5）；Faraday 类=网络不通。核对 `.env` 的 `token_key` 分支（`TENGU_ENV`）后重启 | `bot/main.rb` L111-149、`bot/config.rb` |
 | **409 双轮询** | 见 §5 红线：同 token 出现了第二个 getUpdates 消费者。症状 = 容器 `RestartCount` 持续上涨 / dev 进程突然死亡；2026-10-12 起日志有明确行 `[T2.4] 长轮询中止：HTTP 409 Conflict`，此前为裸 `Telegram::Bot::Exceptions::ResponseError` stack trace | t4.1 §5.1（gem 409 崩溃链源码实证）、§5.1 |
 | **ephemeral 消失**（暗骰结果/按钮不见了） | 已知行为：ephemeral 消息约 25 分钟后消失（T2.2 客户端实测）。补救：本人打 `/secret last` 重取（复用原行、本人限定）；要留痕就用「公开」按钮走常规消息 | t2.2 报告、t3.1 报告 |
 | **导出失败**（`/log end` 回执报发送失败） | 回执措辞「导出文件发送失败——录制数据已保留」时数据都在库里（`/log list` 可见）；查 logs 里 `SendError`（网络抖动/请求被 400）。重发入口未实现（backlog `/log export`），目前只能人工从 DB 导 | t3.5 报告 §4 决策 11、§6.3 |
@@ -378,7 +381,7 @@ Timeout/ConnectionFailed（`client.rb:30-31`）→ `ResponseError` 冒泡出
 `listen` → `main.rb` 对 `api.start` 无兜底 → 进程退出 → `unless-stopped`
 拉起 → 启动期 `setMyCommands` 又撞限流/超时（4 次 429 + 5 次
 Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
-「token 无效/已吊销」并 `exit(1)` → 重启循环。09:16（KST）起随风暴平息自愈。
+「token 无效/已吊销」并 `exit(1)` → 重启循环。01:16（UTC）起随风暴平息自愈。
 
 **修复（2026-10-12，双评审复核后实施）**——`bot/telegram_api.rb` 新增
 `RetryPolicy` 模块，三条契约：

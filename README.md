@@ -6,7 +6,7 @@
 - 🥷 天狗ダイス（忍杀）全功能移植：NSRS 發狂表、カルマロンダリング×5 派阀、キャラメイク 6 表、聖戦判定、倍率/记忆符、1版 9 表
 - 🏦 天狗银行（话题级账本）、🎴 自定义表（建/改/删/发布/掷）、🎭 暗骰（ephemeral + 公开按钮）、📜 跑团 log 录制与导出（txt+json）
 - 💾 SQLite 单文件 WAL 持久化；🐳 Docker 三阶段镜像（构建期跑全量测试作闸门）
-- ✅ 测试基线：**785 引擎 toml 确定性用例 + 796 bot/db 单元测试全绿**（`bundle exec rake verify`）
+- ✅ 测试基线：**785 引擎 toml 确定性用例 + 814 bot/db 单元测试全绿**（`bundle exec rake verify`）
 
 ## 命令速查
 
@@ -32,7 +32,7 @@ Telegram 群/超级群（forum 话题感知）
       │ getUpdates 长轮询（零入境端口）
       ▼
 bot/  ── router（slash 主轨 + 裸 ASCII 辅助轨 + callback 分支）
-      ── handlers/（一文件一功能）── telegram_api（切段/配速/thread/ephemeral）
+      ── handlers/（一文件一功能）── telegram_api（切段/配速/thread/ephemeral/瞬态退避重试）
       ── migration（群升级 re-key）── session_log_recorder（录制挂钩）
 engine 桥接层：BCDice gem（上游零修改）+ game_systems/NinjaSlayer(2)Ex + i18n/
 db/  SQLite（WAL 单连接）：settings / bank / custom_tables / secrets / session_logs
@@ -40,7 +40,7 @@ db/  SQLite（WAL 单连接）：settings / bank / custom_tables / secrets / ses
 
 - **零上游改动**：扩展类继承 `NinjaSlayer`/`NinjaSlayer2` 注册新 ID，`bundle update bcdice` 无冲突升级（`docs/EXTENDING.md` 轴②）
 - **暗骰**：Bot API 10.3 原生 ephemeral（约 25 分钟消失）+ secrets 表持久化兜底 + 公开按钮走常规消息
-- **部署**：Docker multi-stage——builder 阶段跑 `rake verify`（测试失败=镜像不产出），runtime 非 root 精简镜像（303MB，2026-10-12 实测 `e8fe36d2c172`）
+- **部署**：Docker multi-stage——builder 阶段跑 `rake verify`（测试失败=镜像不产出），runtime 非 root 精简镜像（303MB，2026-10-12 实测）
 
 ## 部署（速览）
 
@@ -69,7 +69,7 @@ TEST_TARGET=NinjaSlayer2Ex bundle exec rake test   # 单表筛选
 
 | 文档 | 内容 |
 |---|---|
-| `docs/OPERATIONS.md` | 运维手册：部署/升级/恢复/备份/监控/故障排查/**409 双轮询红线** |
+| `docs/OPERATIONS.md` | 运维手册：部署/升级/恢复/备份/监控/故障排查/**409 双轮询红线与 429 瞬态链** |
 | `docs/EXTENDING.md` | 扩展开发指南（四条轴 + 可跑示例 + 实证坑录） |
 | `docs/REFERENCES.md` | 上游钉版台账（commit hash 登记） |
 | `docs/t1.*~t4.*-report.md` | 各任务实施报告（含逐条评审处置记录与实证） |
