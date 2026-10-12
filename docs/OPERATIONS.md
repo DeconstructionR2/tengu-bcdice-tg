@@ -112,12 +112,14 @@ sudo docker run -d \
 sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 ```
 
-当前保存的 tag（2026-10-12 三次实测 `sudo docker images`，会随版本演进）：
+当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
 `tengu-bcdice-tg:t4.1-20261012`（首版 `3046c75a16bc`）、
 `tengu-bcdice-tg:t4.1-20261012-fixes`（T4.1-review 修订版 `e8fe36d2c172`，同
 `rollback-20261012`）、`tengu-bcdice-tg:rollback-20261012-r2`（429 修复版
-`2b7e058d799f` 的回滚锚点）。`latest` 现指向 T4.5-fix2 新镜像（`24899aa78fd5`，
-二轮评审修复版，§5.2）。
+`2b7e058d799f` 的回滚锚点）、`tengu-bcdice-tg:rollback-20261012-r3`（T4.5-fix2
+二轮评审修复版 `24899aa78fd5` 的回滚锚点）。`latest` 现指向 T4.5-fix3 新镜像
+（`1dcedfa4872c`，独立验收复核修复版：raw_api_call 形状适配 / aux 闸门文档纠偏 /
+create_table 守卫 / 429 回卷等 10 项，835 runs 口径）。
 
 ### 1.5 部署后验证（T4.5 上线时执行）
 
