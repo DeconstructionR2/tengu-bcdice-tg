@@ -2,6 +2,8 @@
 
 **BCDice 全量规则系统 + 天狗ダイス忍杀全功能，单一 Ruby 进程的 Telegram 骰子 bot。**
 
+> 非官方移植版：Unofficial Telegram port of [TenguDiceBot](https://github.com/kooreme/TenguDiceBot) (Discord, MIT).
+
 - 🎲 BCDice 引擎进程内直调（100+ TRPG 规则系统，`bundle update bcdice` 零冲突可升级）
 - 🥷 天狗ダイス（忍杀）全功能移植：NSRS 發狂表、カルマロンダリング×5 派阀、キャラメイク 6 表、聖戦判定、倍率/记忆符、1版 9 表
 - 🏦 天狗银行（话题级账本）、🎴 自定义表（建/改/删/发布/掷）、🎭 暗骰（ephemeral + 公开按钮）、📜 跑团 log 录制与导出（txt+json）
@@ -77,6 +79,7 @@ TEST_TARGET=NinjaSlayer2Ex bundle exec rake test   # 单表筛选
 
 ## 许可与致谢
 
+- **本项目许可**：[MIT](LICENSE)（© 2026 DeconstructionR2）
 - 引擎：[BCDice](https://github.com/bcdice/BCDice)（BSD-3-Clause，© Faceless and たいたい竹流）——gem 进程内调用，零修改
 - 移植数据源：[TenguDiceBot（天狗ダイス）](https://github.com/kooreme/TenguDiceBot)（MIT，© 2022 kooreme）——语义逐行对照移植，无代码直抄
 - 两家许可文本见 `NOTICE.md`；上游钉版快照在 `references/src/`（不入库，台账见 `docs/REFERENCES.md`）

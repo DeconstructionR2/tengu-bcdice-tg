@@ -195,7 +195,7 @@ sudo docker run -d \
 （2026-10-12 起历史锚点已全部清理，走「代码可重建」原则——手头无锚点时，回滚 =
 从 git 重建旧版：`git checkout <旧提交>` → rsync（§1.1 同命令）→ `docker build` →
 换容器（§2.2 ③ 同一步）；完毕 `git switch main` 回主线。常用对照：T4.5-fix2 =
-`8fbe294`、T4.5-fix（429 链修复）= `54b87cb`、现行 T4.5-fix3 = `2a2fdd6`。）
+`90a5ee0`、T4.5-fix（429 链修复）= `e8904b9`、现行 T4.5-fix3 = `01808ac`。）
 
 ### 2.4 上游源码快照升级（另一件事）
 
@@ -455,7 +455,7 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
 ### 5.3 独立验收复核修复登记（2026-10-12，第三棒：上线后独立验收）
 
 对上线的 T4.5-fix2 代码做第三轮独立审计（逐条探针实证，10 项全部成立），修复
-随 T4.5-fix3 入镜像（commit `2a2fdd6`；构建闸门 785+835 全绿）：
+随 T4.5-fix3 入镜像（commit `01808ac`；构建闸门 785+835 全绿）：
 
 1. **raw_api_call 形状适配**（高，沉睡 bug）：生产执行器返回 HTTParty::Response，
    旧实现按 Hash 取 `[:status]`/`[:body]` 恒 nil → HTTP 200 也抛 `RawApiError`。
