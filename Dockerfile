@@ -94,13 +94,16 @@ RUN groupadd --gid 1000 tengu \
 
 WORKDIR /app
 
-# 只带运行所需文件（test/、references/、scripts/、docs/ 不进运行镜像）
+# 只带运行所需文件（test/、references/、scripts/、docs/ 不进运行镜像）。
+# NOTICE.md/LICENSE 必须随镜像：运行镜像含 TenguDiceBot 派生表数据（MIT 要求
+# 许可文本与实质性部分随行），本项目自身 MIT 许可同理。
 COPY bot/ bot/
 COPY db/ db/
 COPY lib/ lib/
 COPY game_systems/ game_systems/
 COPY i18n/ i18n/
 COPY Gemfile Gemfile.lock ./
+COPY NOTICE.md LICENSE ./
 
 # 数据卷：SQLite（默认 /app/data/tengu.db，bot/config.rb）+ .env（用户自填）。
 # TELEGRAM_ENV_FILE 指向卷内 .env——镜像里没有 .env（.dockerignore 排除），
