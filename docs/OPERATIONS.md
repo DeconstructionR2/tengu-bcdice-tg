@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 846）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 863）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
@@ -117,11 +117,12 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 同日多轮换版要给名字加 `-rN` 后缀防撞名（2026-10-12 实况：同日三轮 =
 `rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
-当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
-仅 `tengu-bcdice-tg:latest`（`80161449e6d8`，T4.5-fix4 三轮复核修复版：
-publish 枚举 DoS 上限 / ephemeral 管理员前提与回指 / dice_bounds 负骰项 /
-admin 时钟回退方向 / int64 四文件统一等，846 runs 口径；基线含 fix3
-`72617a2` 全部成果）。历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
+当前保存的 tag（2026-10-13 实测 `sudo docker images`，会随版本演进）：
+仅 `tengu-bcdice-tg:latest`（`b2ef6b431df7`，S1-audit 四路深审修复版：
+长轮询超时竞争 / `/ct publish` 回执上限 / 空壳表底线 / 守卫与文案对称串修等，
+863 runs 口径；基线含 `54cb72b`（S1-audit）全部成果）。上一版 latest
+（`80161449e6d8`，fix4 版）与其后重建版（`d482ab916643`）已随本轮换版清理
+（共释放 >600MB 镜像空间）；历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
 拍板的「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；**换版前仍按
 上文纪律给现役镜像留新锚点**，无锚点时的回滚走 §2.3 的 git 重建流程。
 
@@ -526,6 +527,39 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
 自身失败时「兜底必答」失效——Telegram 是唯一通道，本层只能 warn；
 多段发送「发了一半、log 一条不记」——正确修法需切段级送达回执重构
 录制契约，改动面大于收益，warn 已带段数，留 backlog。
+
+### 5.5 四路深审修复登记（2026-10-13，第五棒：公开后源码全审）
+
+对已公开的 `6f14897`（公开时点状态）做四路独立深审（Bot 框架 / 处理器 / db / 引擎+脚本，
+50+ 文件全量通读），全部发现逐条亲验后修复，随本轮镜像入库（构建闸门 785+863 全绿）：
+
+1. **HTTP 读超时 = 长轮询窗口（20s/20s 边界竞争，高，生产实证）**：gem 默认长轮询
+   timeout=20s 与 `Configuration#connection_timeout` 默认 20s 相等——空闲轮询偶发客户端
+   先到期（生产日志实测约 19 次/小时的 `Faraday::TimeoutError`，每次 2~8s 退避停摆）。
+   修复：`telegram_api.rb` 顶部 `Telegram::Bot.configure { |c| c.connection_timeout = 30 }`。
+2. **`/ct publish` 缺失清单回执无界（中）**：`missing.join` 无截断——1d10000 档位内、
+   零数据可让回执膨胀 ~4.9 万字符 → 12 段消息 + 单线程阻塞 ~12s。修复：超 20 档只列
+   前 20 个 + 「共 N 档」（`PUBLISH_MISSING_PREVIEW_MAX`）。
+3. **空壳表可由跳过路径进公共（中）**：`/ct range`（本仓库新增入口）让 isUse 首次可由
+   命令层打开，而 isUse/+x 两条跳过校验路径都放行零数据表。修复：`data_verification`
+   最前面加「零数据不得发布」底线（两条跳过路径一并覆盖）。
+4. **低级别串修（17 项，全部有测试钉住）**：`dice del` 不存在快捷名不再误关范围钳
+   （登记为与母本差异④）；前导零出目键归一（"007"→"7"）；超长数字補正回落为忽略
+   （不再 FloatDomainError→「存储层出错」误导）；累计越界给专用文案；raw 降级失败转
+   `SendError`（契约统一）；辅助轨反射收割显式跳过 `/x` 正则；admin 时钟防御补齐
+   「故障窗口不写缓存」与「非数值即故障」两个边角；`session_logs.append_entry`
+   int64 守卫（log_id 非法即 raise、user_id 超界归 NULL）；`secrets.owned_by?`
+   比较侧严格解析（对齐 custom_tables）；`settings` 三处写纳入 chat_id 守卫
+   （第五张表，`Settings::InvalidArgument`）；`log_entries` 索引升级 UNIQUE
+   （`idx_log_entries_log_uniq`，旧名 DROP 迁移）；bank/connection/spec 三处
+   「注释与实现矛盾 / 纪律登记」订正；日文 HELP 中文混入修正（含生成器与 toml
+   夹具的同类字）；backup.sh 四处（`mv` 判错、锁段时序、`head -n -N` → POSIX 写法、
+   `.tmp-*` 残骸清理）；对拍脚本 `_crosscheck_tables.mjs` 的 L2 死代码修正
+   （摘要剥离必须先于冒号剥除）。
+5. **订正与登记**：测试基线 846 → **863**（+17 钉测）；`db/schema.sql` 索引名变更
+   （旧库自动迁移，DROP+CREATE 均幂等）；登记不改：`execute`/`changes` 非原子对
+   （单线程前提，已在 connection.rb 注释登记）、spec 仅支持 dice/data 两键、
+   `extract_tengu_data.mjs` 产物含 node_version（md5 仅同机可比）。
 
 ---
 
