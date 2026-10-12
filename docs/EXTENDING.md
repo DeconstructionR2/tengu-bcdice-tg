@@ -362,11 +362,11 @@ bundle exec rake verify                                           # 全量回归
 
 | 坑 | 说明 | 出处 |
 |---|---|---|
-| 菜单命令无 handler | 用户点了没反应 = 装死；未实装先挂 PendingHandler 占位应答 | `bot/handlers/help.rb`（范式）、计划 §8（3a9cf58 热修）、`docs/t3.5-report.md`（占位替换实录） |
+| 菜单命令无 handler | 用户点了没反应 = 装死；未实装先挂 PendingHandler 占位应答 | `bot/handlers/help.rb`（范式）、计划 §8（0bc8ad6 热修）、`docs/t3.5-report.md`（占位替换实录） |
 | 发送封装缺 `**extra` | `reply_markup` 被 ArgumentError 吞、rescue 静默，按钮没发出去测试也看不出 | `docs/t3.1-report.md` §3 缺口 1 |
 | `run_handler` 没摊平 `data` | 回调 handler 读 `context[:data]` 拿 nil，整条路径走「未知命令」分支 | `docs/t3.1-report.md` §3 缺口 2（含泛化教训：「同一个 handler 挂两个键必须验两个键都被调用」） |
 | 「调到」≠「送达」 | 边界测试必须断言假身实际收到的 wire 参数（`FakeApi` 的 `answered` 里真有 `show_alert: true`） | `docs/t3.1-report.md` kimi 评审 #1 |
-| listen 接缝形状 | `Client#listen` yield 的是 `handle_update` 返回值（Message 而非 Update；callback 是 CallbackQuery 本体）——测试假身的产出形状必须对着 vendor 源码写 | 计划 §8 Phase 2 验收记录（645c47a）、`test/bot/test_listen_seam_test.rb` |
+| listen 接缝形状 | `Client#listen` yield 的是 `handle_update` 返回值（Message 而非 Update；callback 是 CallbackQuery 本体）——测试假身的产出形状必须对着 vendor 源码写 | 计划 §8 Phase 2 验收记录（54c7bad）、`test/bot/test_listen_seam_test.rb` |
 | 匿名管理员 | 把 `user_id` 当所有者/权限位前必须对匿名管理员 fail-closed（平台共享 id） | `docs/t3.4-report.md`、`callback_query.from` 才是真人 |
 | DB 纪律 | sqlite3 gem 三坑（results_as_hash 全局、execute 不返回行数、REFERENCES 需 PRAGMA）、事务嵌套/块内 return、INTEGER 动态类型显式校验 | `docs/t2.4-report.md` D5/D6、`docs/t3.2-report.md` |
 | 录制挂钩边界 | 新 handler 若"自走发送"（不经 router 代发），进不进 `/log` 要显式设计（挂钩②不可达）；`/secret` 类私密内容绝不落盘 | `docs/t3.5-report.md` §2/§4 |
