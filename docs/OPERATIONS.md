@@ -118,13 +118,13 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 `rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
 当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
-`tengu-bcdice-tg:t4.1-20261012`（首版 `3046c75a16bc`）、
-`tengu-bcdice-tg:t4.1-20261012-fixes`（T4.1-review 修订版 `e8fe36d2c172`，同
-`rollback-20261012`）、`tengu-bcdice-tg:rollback-20261012-r2`（429 修复版
-`2b7e058d799f` 的回滚锚点）、`tengu-bcdice-tg:rollback-20261012-r3`（T4.5-fix2
-二轮评审修复版 `24899aa78fd5` 的回滚锚点）。`latest` 现指向 T4.5-fix3 新镜像
-（`1dcedfa4872c`，独立验收复核修复版：raw_api_call 形状适配 / aux 闸门文档纠偏 /
-create_table 守卫 / 429 回卷等 10 项，835 runs 口径）。
+`tengu-bcdice-tg:rollback-20261012-r2`（429 修复版 `2b7e058d799f` 的回滚锚点）、
+`tengu-bcdice-tg:rollback-20261012-r3`（T4.5-fix2 二轮评审修复版 `24899aa78fd5` 的
+回滚锚点）。`latest` 现指向 T4.5-fix3 新镜像（`1dcedfa4872c`，独立验收复核修复版：
+raw_api_call 形状适配 / aux 闸门文档纠偏 / create_table 守卫 / 429 回卷等 10 项，
+835 runs 口径）。T4.1 时代两枚历史 tag——首版 `3046c75a16bc` 与 T4.1-review 修订版
+`e8fe36d2c172`（同 `rollback-20261012`）——属预-429-fix 版本、无回滚价值，
+**2026-10-12 已清理**（释放约 53MB）；两版代码均在 git 历史中，按需重建即可。
 
 ### 1.5 部署后验证（T4.5 上线时执行）
 
