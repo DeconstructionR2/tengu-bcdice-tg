@@ -115,7 +115,11 @@ module TelegramBot
     # 统一套的好处：不必为每条命令各写一个 S 变体，也就不会漏。
     EXPRESSION_SOURCES = [CORE_EXPR, DIFFICULTY_EXPR].map(&:source).freeze
 
-    # 参与闸门判定的规则系统（取全集，保守：宁可路由给 handler 再判当前规则）
+    # 参与闸门判定的规则系统：忍杀 4 系统（本项目的主战场）。⚠️ **不含其它
+    # 系统**（2026-10-12 二审指正本注释旧文「取全集」名不副实）：群切到 CoC 等
+    # 系统后，裸打 `CC<=50` 这类系统专属命令**不会**命中闸门（只有通用骰式与
+    # 忍杀系命令会），请用 /roll 显式触发。这是「宁漏不抢」的刻意取舍——
+    # 闸门越宽抢话风险越高；slash 主轨不受影响。
     DEFAULT_SYSTEM_IDS = %w[
       NinjaSlayer2Ex NinjaSlayerEx NinjaSlayer2 NinjaSlayer
     ].freeze

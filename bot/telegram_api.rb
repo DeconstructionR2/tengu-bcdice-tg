@@ -9,9 +9,11 @@
 #      parse_mode 可配置（默认纯文本，§13 第 7 项拍板）；
 #   2. 长轮询循环封装（包 telegram-bot-ruby 的 Client#listen），
 #      **逐消息错误兜底**——单条消息异常不得杀死循环；轮询层瞬态故障
-#      （429/5xx/Faraday 族）退避重进、不杀进程（见 RetryPolicy，2026-10-12 修复）；
-#   3. 启动时 setMyCommands 注册主轨菜单（§6），/secret 带 is_ephemeral=true，
-#      瞬态故障有界退避重试（同 RetryPolicy）；
+#      （429/5xx/Faraday 族）退避重进、不杀进程（RetryPolicy）；gem 内部的
+#      无退避紧密重试由 ClientPollingBackoff patch 接管（均 2026-10-12 修复）；
+#   3. setMyCommands 注册主轨菜单（§6），/secret 带 is_ephemeral=true，瞬态
+#      故障有界退避重试（RetryPolicy）；**由 main.rb 启动期显式调一次**
+#      （start 不再重复调——T2.1 遗留的双注册已于 2026-10-12 消除）；
 #   4. raw_api_call 薄封装：gem 白名单端点不支持的方法/参数走此通道（计划 §12 R2）；
 #   5. token 解析：TENGU_ENV=='test' 时取 TELEGRAM_BOT_TOKEN_TEST，否则正式 token。
 #
@@ -205,6 +207,63 @@ module TelegramBot
   end
 
   # --------------------------------------------------------------------------
+  # ClientPollingBackoff：gem 长轮询「无退避紧密重试」的补丁（2026-10-12 二审实证）
+  #
+  # gem client.rb:30-31 对 Faraday::TimeoutError/ConnectionFailed 的处理是
+  # `retry if @running`——**原地立即重试、无 sleep、无日志**。网络中断/Telegram
+  # 故障期这是一层沉默的高频重试（假 api 探针 0.5s 内 34 万次调用；真机受连接
+  # 超时开销限制量级低得多，但同样无退避、无观测性），且 RetryPolicy 从外层
+  # **插不进去**（异常根本没机会逃出 gem 的 rescue）。
+  #
+  # 本模块 prepend 进 Telegram::Bot::Client 重定义 fetch_updates（gem 2.8.1 源码
+  # 仅 5 行，逐字对应 + 接管这两类异常）：
+  #   - 连续失败按 RetryPolicy.backoff 退避（封顶 30s），每次 warn 一行（可观测）；
+  #   - `@running` 语义原样保留（`stop` 后不再重试）；成功一轮后失败计数清零；
+  #   - ResponseError（429/401/409…）**不在此接管**——原样上抛，归
+  #     TelegramApi#start 的 RetryPolicy 兜底（职责分层不重叠）；
+  #   - warn 只打异常类名——Faraday 的 message 可能夹带含 token 的 URL。
+  #
+  # ⚠️ gem 升级复核点（钉版 2.8.1，test/bot/test_polling_backoff_test.rb 有版本
+  #   绊线测试）：本方法复制了 client.rb fetch_updates 的方法体，升级
+  #   telegram-bot-ruby 时必须对照新版源码复核本 patch（docs/EXTENDING.md 轴①
+  #   已登记）。
+  # --------------------------------------------------------------------------
+  module ClientPollingBackoff
+    # 连续失败退避上限（秒）
+    BACKOFF_CAP = 30
+
+    # 可注入（测试传假身）：默认真 sleep + stderr warn
+    @sleeper = ->(seconds) { sleep(seconds) }
+    @warner = ->(message) { warn(message) }
+
+    class << self
+      attr_accessor :sleeper, :warner
+    end
+
+    def fetch_updates(&block)
+      api.getUpdates(options).each do |update|
+        yield handle_update(update)
+      end
+      @tengu_poll_failures = 0 # 成功一轮：连续失败计数清零
+    rescue Faraday::TimeoutError, Faraday::ConnectionFailed => e
+      return unless @running # gem 原契约：stop 后不再重试
+
+      @tengu_poll_failures = (@tengu_poll_failures || 0) + 1
+      delay = RetryPolicy.backoff(@tengu_poll_failures, cap: BACKOFF_CAP)
+      ClientPollingBackoff.warner.call(
+        "[telegram_api] getUpdates 网络错误（#{e.class}），#{delay}s 后重试" \
+        "（连续第 #{@tengu_poll_failures} 次；gem 原生为无退避紧密重试，本 patch 接管）"
+      )
+      ClientPollingBackoff.sleeper.call(delay)
+      retry
+    end
+  end
+
+  # prepend 即全局生效（本进程只有一个 Client；测试的假 client 不继承 gem
+  # Client，不受影响）
+  Telegram::Bot::Client.prepend(ClientPollingBackoff)
+
+  # --------------------------------------------------------------------------
   # TelegramApi 主类
   # --------------------------------------------------------------------------
   class TelegramApi
@@ -386,6 +445,7 @@ module TelegramBot
       params[:message_thread_id] = thread_id if thread_id
       params[:parse_mode] = @parse_mode if @parse_mode
 
+      retries = 0
       begin
         @api_client.api.send_document(**params)
       rescue NoMethodError => e
@@ -396,6 +456,21 @@ module TelegramBot
         raise SendError,
               "sendDocument 降级失败：raw 通道不支持文件上传" \
               "（JSON body 无法承载文件）。gem 报端点缺失：#{e.name.inspect}"
+      rescue Telegram::Bot::Exceptions::ResponseError => e
+        # 与 send_one 同一契约（2026-10-12 二审对齐——此前裸抛 gem 异常，
+        # 破坏「发送入口只抛 SendError」的统一契约）：429 按 retry_after 重投
+        # 一次（被限流的请求确定未执行，无重复风险；5xx 不重投防重复）；
+        # 重投前回卷 IO——首次尝试可能已读走半段流（FilePart 内包 UploadIO）。
+        # retry 不触发 ensure（ensure 只在最终退出时跑），IO 不会在重投前被关。
+        if e.error_code.to_i == 429 && retries < RetryPolicy::SEND_MAX_RETRIES
+          retries += 1
+          io.rewind if io.respond_to?(:rewind)
+          delay = RetryPolicy.retry_after_seconds(e) || 2
+          warn("[telegram_api] 文档发送遇 429 限流（chat_id=#{chat_id}），#{delay}s 后重投一次")
+          @sleeper.call(delay)
+          retry
+        end
+        raise SendError, format_send_error(e, params)
       ensure
         # 只 close 本方法自己打开的 IO —— 调用方传进来的 IO 生命周期归调用方
         opened&.close
@@ -406,7 +481,7 @@ module TelegramBot
     # 2. 长轮询循环
     # ----------------------------------------------------------------------
 
-    # 启动长轮询并注册主菜单。
+    # 启动长轮询。
     #
     # @param dispatch [#call] 收到 update 时的回调（T2.3 接路由；本任务为占位）
     # @yieldparam update [Telegram::Bot::Types::Update]
@@ -418,8 +493,11 @@ module TelegramBot
     # fetch_updates 抛出的瞬态故障（429/5xx/Faraday 族）同样不得杀死进程：
     # 退避后重进 listen。非瞬态（401 token 失效 / 409 双轮询红线 / 400 等）
     # 原样上抛，由 main.rb 兜底 exit(1)。全貌见 RetryPolicy 模块注释。
+    #
+    # 菜单注册**不在此方法内**（2026-10-12 二审修复 T2.1 遗留的双注册：
+    # main.rb 显式调一次 + 这里又调一次，限流风暴期白撞一倍请求量）——
+    # 由 main.rb 启动期显式调 `register_main_commands` 一次（带分码文案兜底）。
     def start(dispatch: nil, &block)
-      register_main_commands
       dispatch ||= block || ->(_update) {}
 
       client = @api_client
@@ -455,9 +533,10 @@ module TelegramBot
         @sleeper.call(delay)
         retry # 重进 listen；gem 的 offset 在 client options 里续传，不丢更新
       rescue Faraday::Error => e
-        # gem 的 fetch_updates 已原地重试 Timeout/ConnectionFailed（client.rb:30-31，
-        # 且无退避）；能走到这里的是它没兜住的 Faraday 族（SSLError 等）——
-        # 退避后重进，同一条「不杀进程」契约。
+        # gem 原生对 Timeout/ConnectionFailed 的无退避 retry 已由
+        # ClientPollingBackoff patch 接管（有退避、有日志）；能走到这里的只剩
+        # 两边都没兜住的 Faraday 族（SSLError 等）——退避后重进，同一条
+        # 「不杀进程」契约。
         poll_retries += 1
         delay = RetryPolicy.backoff(poll_retries, cap: RetryPolicy::POLL_BACKOFF_CAP)
         warn("[telegram_api] 长轮询遇网络错误（#{RetryPolicy.label(e)}），" \
@@ -484,6 +563,9 @@ module TelegramBot
     # ----------------------------------------------------------------------
 
     # setMyCommands 注册主菜单。/secret 带 is_ephemeral=true。
+    #
+    # **全进程只由 main.rb 启动期调一次**（2026-10-12 二审消除 T2.1 遗留的
+    # 双注册：start 内部曾再调一次，幂等无害但限流风暴期白撞一倍请求量）。
     #
     # gem 侧走 `set_my_commands`（Api::ENDPOINTS 白名单含 'setMyCommands'，
     # 见 endpoints.rb:96）。BotCommand 支持 is_ephemeral
@@ -546,12 +628,17 @@ module TelegramBot
     # 只管方法名），未收录的参数其实能透传，但**不依赖**该结论——统一通道更稳。
     #
     # @param method [String] Bot API 方法名，如 "ephemeral_message_parameters" 相关端点
-    # @param params [Hash] 参数（Hash/Array 自动 JSON 化，与 gem 行为一致）
+    # @param params [Hash] 参数。本通道 wire 形态是 **application/json body**
+    #   （default_http_executor），故 Hash/Array/gem 类型递归 unwrap 成**原生
+    #   JSON 类型**（unwrap_for_json）——「数组编成 JSON 字符串」是
+    #   form-urlencoded 通道的约定，JSON body 里 Telegram 期望真数组/真对象
+    #   （2026-10-12 二审实证旧实现的 JSON-in-JSON 二次编码：沉睡 bug，
+    #   白名单全覆盖时不可达，一旦降级兜底就是坏的）。
     # @return [Hash] 解析后的完整响应（{"ok"=>true,"result"=>...}）
     # @raise [RawApiError] HTTP 层失败或 ok=false
     def raw_api_call(method, params = {})
       url = "#{@base_url}/bot#{@token}/#{method}"
-      body = params.transform_values { |v| jsonify(v) }
+      body = params.transform_values { |v| unwrap_for_json(v) }
 
       response = @http_executor.call(url, body)
       status = response[:status] || response["status"]
@@ -619,8 +706,20 @@ module TelegramBot
                     headers: { "Content-Type" => "application/json" })
     end
 
-    def jsonify(value)
-      (value.respond_to?(:to_compact_hash) || value.is_a?(Array) || value.is_a?(Hash)) ? value.to_json : value
+    # 递归 unwrap 成原生 JSON 可序列化形态：gem 类型（to_compact_hash）→ 纯
+    # Hash；Array/Hash 逐层展开；标量原样。**不再** to_json 成字符串——那是
+    # form-urlencoded 通道的约定，本通道（application/json body）发字符串化的
+    # 数组会让 Telegram 收到 {"commands":"[…]"} 这种 JSON-in-JSON 坏载荷。
+    def unwrap_for_json(value)
+      if value.respond_to?(:to_compact_hash)
+        unwrap_for_json(value.to_compact_hash)
+      elsif value.is_a?(Array)
+        value.map { |v| unwrap_for_json(v) }
+      elsif value.is_a?(Hash)
+        value.to_h { |k, v| [k, unwrap_for_json(v)] }
+      else
+        value
+      end
     end
 
     def format_send_error(err, params)

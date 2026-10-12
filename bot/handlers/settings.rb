@@ -81,6 +81,9 @@ module TelegramBot
       # 拒答（非管理员改开关）
       NOT_ADMIN = "只有本群管理员能改这个设置。需要的话请让管理员执行 /settings aux on|off。"
 
+      # 存储层故障的用户可见回执（2026-10-12 二审对齐「不装死」口径）
+      STORAGE_ERROR = "存储层出错，操作未完成，请稍后再试。"
+
       # 私聊里的确认文案前缀（区分群/私聊，私聊的「群」字样会让人困惑）
       PRIVATE_PREFIX = "（私聊）"
 
@@ -113,6 +116,11 @@ module TelegramBot
       # router 的 handler 注册表接口
       def call(context)
         handle(context)
+      rescue StandardError => e
+        # 未捕获异常（典型 = DB 锁/损坏）兜底：slash 命令是显式触发，回错误
+        # 文案（不装死），异常不再裸冒到 router（2026-10-12 二审修复）
+        warn_line("[settings] 未捕获异常：#{e.class}")
+        STORAGE_ERROR
       end
 
       # ------------------------------------------------------------------

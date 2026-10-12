@@ -78,6 +78,10 @@ module TelegramBot
       # 落库失败时的追加说明（结果仍以 ephemeral 送达，只是事后取不回）
       PERSIST_FAILED = "\n（未能存档，之后无法用 /secret last 取回）"
 
+      # 存储层故障的本人可见回执（**只走 ephemeral**——暗骰的静默契约是
+      # 「群里什么都看不见」，DB 故障也不能在群里出声；2026-10-12 二审修复）
+      STORAGE_ERROR = "存储层出错，操作未完成，请稍后再试。"
+
       # `last` 子命令（大小写不敏感）
       LAST = "last"
 
@@ -143,6 +147,11 @@ module TelegramBot
         return handle_last(context, chat_id, user_id) if last?(args)
 
         handle_roll(context, chat_id, user_id, args)
+      rescue StandardError => e
+        # 未捕获异常（典型 = DB 锁/损坏）兜底：warn + 尽力 ephemeral 告知本人
+        # （send_ephemeral 自兜发送失败，返回 nil；2026-10-12 二审修复）
+        warn_line("[secret] 未捕获异常：#{e.class}")
+        send_ephemeral(context, context[:chat_id].to_i, context[:user_id].to_i, STORAGE_ERROR)
       end
 
       # ------------------------------------------------------------------
@@ -197,6 +206,16 @@ module TelegramBot
                                         thread_id: secret.thread_id,
                                         text: secret.result_text)
         nil
+      rescue StandardError => e
+        # 未捕获异常（典型 = DB 锁/损坏）兜底：不答则用户客户端一直转圈，
+        # 尽力 alert 告知（answer 自身失败则由 answered 路径自然落空，
+        # 不再二级兜底——2026-10-12 二审修复）
+        warn_line("[secret] 回调处理未捕获异常：#{e.class}")
+        begin
+          answered(context[:answer_callback_query], STORAGE_ERROR, alert: true)
+        rescue StandardError
+          nil
+        end
       end
 
       private

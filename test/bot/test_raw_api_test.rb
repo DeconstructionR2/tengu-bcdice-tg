@@ -60,7 +60,7 @@ class TestRawApiCall < Minitest::Test
     assert_equal 9, body[:message_thread_id]
   end
 
-  def test_hash_and_array_params_are_jsonified
+  def test_hash_and_array_params_pass_as_native_json_types
     http = BotTestHelper::FakeHttpExecutor.new
     api = api_with(http)
 
@@ -70,8 +70,16 @@ class TestRawApiCall < Minitest::Test
                      ephemeral_message_parameters: { receiver_user_id: 5 },
                      list: [1, 2])
 
-    assert_equal '{"receiver_user_id":5}', http.last_body[:ephemeral_message_parameters]
-    assert_equal "[1,2]", http.last_body[:list]
+    # wire 形态是 application/json body → Hash/Array 必须是**原生 JSON 类型**
+    # （2026-10-12 二审修复：旧实现 to_json 成字符串，Telegram 会收到
+    # {"list":"[1,2]"} 这种 JSON-in-JSON 坏载荷）
+    assert_equal({ receiver_user_id: 5 }, http.last_body[:ephemeral_message_parameters])
+    assert_equal [1, 2], http.last_body[:list]
+
+    # wire 层形状（default_http_executor 就是 body.to_json 发出去）
+    wire = JSON.parse(http.last_body.to_json)
+    assert_kind_of Array, wire["list"], "wire JSON 里 list 必须是真数组"
+    assert_kind_of Hash, wire["ephemeral_message_parameters"], "wire JSON 里对象必须是真对象"
   end
 
   # --- 错误路径：HTTP 失败 ------------------------------------------------

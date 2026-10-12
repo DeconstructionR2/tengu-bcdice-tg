@@ -116,11 +116,15 @@ class TestMainMenu < Minitest::Test
     assert_equal 1, http.calls.size, "应降级走一次 raw HTTP"
     assert_match(%r{/setMyCommands\z}, http.last_url)
 
-    body = http.last_body
-    # raw 通道下 commands 以 **JSON 字符串**发送（Bot API 的 JSON 序列字段约定，
-    # 与 gem 的 jsonify_value 行为一致）→ 断言的是解析回来的内容而非原始类型。
-    parsed = JSON.parse(body[:commands])
-    assert_equal payload, parsed, "raw 载荷形状须与主定义一致"
+    # raw 通道 wire 形态是 application/json body（2026-10-12 二审修复
+    # JSON-in-JSON 二次编码）：commands 是**原生数组**而非 JSON 字符串——
+    # 「数组编成 JSON 字符串」是 form-urlencoded 通道约定，JSON body 里
+    # Telegram 期望真数组。
+    assert_equal payload, http.last_body[:commands],
+                 "raw 载荷形状须与主定义一致（原生 JSON 类型）"
+    wire = JSON.parse(http.last_body.to_json)
+    assert_kind_of Array, wire["commands"], "wire JSON 里 commands 必须是真数组"
+    assert_equal "start", wire["commands"].first["command"]
   end
 
   def test_raw_fallback_does_not_leak_token_into_body
@@ -138,13 +142,28 @@ class TestMainMenu < Minitest::Test
   end
 
   # --- 启动时自动注册 ------------------------------------------------------
-
-  def test_start_registers_menu
+  #
+  # 2026-10-12 二审修复（T2.1 遗留双注册）：菜单注册唯一入口 = main.rb 启动期
+  # 显式调 register_main_commands；start **不再**内部注册（限流风暴期双注册
+  # 白撞一倍 setMyCommands 请求量）。本条钉死新契约，防回归。
+  def test_start_does_not_register_menu
     api, fake, = build_api
     api.api_client.define_singleton_method(:listen) { |&_b| nil }
 
     api.start(dispatch: ->(_u) {})
 
-    refute_nil fake.registered_commands, "start 应在启动时注册主轨菜单"
+    assert_nil fake.registered_commands,
+               "start 不得注册菜单（唯一注册点是 main.rb 的显式调用）"
+  end
+
+  def test_explicit_register_then_start_registers_exactly_once
+    api, fake, = build_api
+    api.api_client.define_singleton_method(:listen) { |&_b| nil }
+
+    api.register_main_commands
+    api.start(dispatch: ->(_u) {})
+
+    assert_equal REQUIRED_COMMANDS.size, fake.registered_commands[:commands].size,
+                 "显式注册一次 + start 后应只有一次注册记录"
   end
 end

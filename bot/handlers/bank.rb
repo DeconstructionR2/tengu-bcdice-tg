@@ -92,6 +92,9 @@ module TelegramBot
       # 天狗 error.replyErrorMessage() 的中文版（未知子命令/金额非法共用一条）
       BAD_INPUT = "输入有误，请按 /bank help 的用法重新输入。"
 
+      # 存储层故障的用户可见回执（2026-10-12 二审对齐「不装死」口径）
+      STORAGE_ERROR = "存储层出错，操作未完成，请稍后再试。"
+
       # 余额/道具的固定呈现（天狗 `現万札：**N**  アイテム：…` 的中文版）
       #   N 会过 893 彩蛋（可能变成 👺  -893  👺）
       def self.balance_line(record)
@@ -150,6 +153,12 @@ module TelegramBot
         when "help" then USAGE
         else BAD_INPUT
         end
+      rescue StandardError => e
+        # 未捕获异常（典型 = DB 锁/损坏）兜底：DB 层刻意「真故障抛异常」
+        # （见 bank#statement 注释），异常冒到 router 只 warn 一行 = 用户视角
+        # 装死；回错误文案（2026-10-12 二审对齐 custom_table/session_log 口径）
+        warn_line("[bank] 未捕获异常（verb=#{verb.inspect}）：#{e.class}")
+        STORAGE_ERROR
       end
 
       private

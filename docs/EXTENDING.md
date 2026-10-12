@@ -64,6 +64,7 @@ TEST_TARGET=NinjaSlayer2Ex,NinjaSlayerEx bundle exec rake test   # 只跑两个 
 |---|---|---|
 | 手痒改 `vendor/bundle` | 改了它，「零冲突升级」的根就没了；gem 升级会覆盖你的改动 | 计划 §0.3 只读红线 |
 | 忘了提交 `Gemfile.lock` | 构建 `BUNDLE_FROZEN` 直接失败（fail-closed 而不是静默拉新版） | Dockerfile 头注释 / R9 |
+| 升级 `telegram-bot-ruby` | `ClientPollingBackoff`（bot/telegram_api.rb）**复制了** gem 2.8.1 `Client#fetch_updates` 的方法体来接管无退避紧密重试，`RetryPolicy` 依赖 `ResponseError#error_code/data` 形状——升级前对照新版 `client.rb`/`exceptions/response_error.rb` 复核；版本绊线 `test/bot/test_polling_backoff_test.rb` 会当场红 | 2026-10-12 二审修复 |
 | 上游正则语义悄悄变 | 扩展命令的 toml 是**逐字断言**，漂移当场红；`engine_structure_test.rb` 是结构守卫 | `docs/t1.4-karmarond-report.md` §3（Preprocessor 三关实测） |
 | 把「gem 升级」和「快照重取」混为一谈 | `references/src/` 快照只在要重跑数据 diff/对照时重克隆，须在 `docs/REFERENCES.md` 登记新旧 hash | REFERENCES.md 顶部流程 |
 

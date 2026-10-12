@@ -229,7 +229,7 @@ class TestSend < Minitest::Test
     end
   end
 
-  def test_start_registers_menu_then_dispatches
+  def test_start_dispatches_without_registering_menu
     api, fake, = build_api
     received = []
 
@@ -244,7 +244,9 @@ class TestSend < Minitest::Test
     api.start(dispatch: ->(u) { received << u })
 
     assert listening, "start 应走 gem 的 client.listen 长轮询"
-    refute_nil fake.registered_commands, "start 启动时应注册主轨菜单"
+    assert_nil fake.registered_commands,
+               "start 不再注册菜单（2026-10-12 二审修复双注册：唯一注册点 = " \
+               "main.rb 启动期显式调 register_main_commands）"
   end
 
   def test_start_swallows_dispatch_exception

@@ -131,6 +131,10 @@ module TelegramBot
       # 也别把 338 个系统全刷出来）
       EXAMPLE_COUNT = 6
 
+      # 存储层故障的用户可见回执（2026-10-12 二审对齐 custom_table/session_log
+      # 的「不装死」口径——此前 DB 异常冒到 router 只 warn 一行，用户只看到没反应）
+      STORAGE_ERROR = "存储层出错，操作未完成，请稍后再试。"
+
       # 注入项
       attr_reader :settings, :resolver, :system_ids_provider
 
@@ -172,6 +176,12 @@ module TelegramBot
         when "system" then handle_system(context)
         else handle_aux(context)
         end
+      rescue StandardError => e
+        # 未捕获异常（典型 = DB 锁/损坏）兜底：slash 命令是用户显式触发，
+        # 回错误文案（不装死）；辅助轨（裸打，kind=:aux）保持静默契约——
+        # 一条闲聊恰逢 DB 故障不该收到报错回复（2026-10-12 二审修复）。
+        warn_line("[dice] 未捕获异常（name=#{context[:name].inspect}）：#{e.class}")
+        context[:kind] == :aux ? nil : STORAGE_ERROR
       end
 
       # ------------------------------------------------------------------

@@ -17,6 +17,7 @@
 
 require "minitest/autorun"
 require "json"
+require "tempfile"
 require_relative "test_helper"
 
 class TestTransientRetry < Minitest::Test
@@ -39,13 +40,15 @@ class TestTransientRetry < Minitest::Test
 
   # 前 N 次调用抛指定异常、之后正常记录的假 api（set_my_commands / send_message）
   class FlakyApi
-    attr_reader :set_calls, :send_calls
+    attr_reader :set_calls, :send_calls, :document_calls
 
-    def initialize(set_failures: [], send_failures: [])
+    def initialize(set_failures: [], send_failures: [], document_failures: [])
       @set_failures = set_failures
       @send_failures = send_failures
+      @document_failures = document_failures
       @set_calls = 0
       @send_calls = 0
+      @document_calls = 0
       @registered = nil
     end
 
@@ -61,6 +64,13 @@ class TestTransientRetry < Minitest::Test
       raise @send_failures.shift if @send_failures.any?
 
       :fake_message
+    end
+
+    def send_document(**_params)
+      @document_calls += 1
+      raise @document_failures.shift if @document_failures.any?
+
+      :fake_document
     end
   end
 
@@ -248,6 +258,46 @@ class TestTransientRetry < Minitest::Test
 
     assert_raises(TelegramBot::SendError) { api.send_text(42, "x") }
     assert_equal 1, fake.send_calls, "400 请求本身有问题，行为与修复前一致"
+  end
+
+  # --- ③b 文档发送：同一契约（2026-10-12 二审对齐——此前裸抛 ResponseError）----
+
+  def with_temp_document
+    Tempfile.create(["tengu-test", ".txt"]) { |f| f.write("log"); f.flush; yield f.path }
+  end
+
+  def test_send_document_retries_429_once_and_delivers
+    fake = FlakyApi.new(document_failures: [response_error(429, retry_after: 4)])
+    api, sleeper = build_api(fake)
+
+    with_temp_document do |path|
+      result = api.send_document(42, path)
+      assert_equal :fake_document, result, "重投成功应按正常路径返回"
+    end
+    assert_equal 2, fake.document_calls, "429 后应重投一次"
+    assert_equal [4], sleeper.calls, "按 retry_after=4 等待（首次发送无配速等待）"
+  end
+
+  def test_send_document_raises_send_error_after_single_429_retry
+    fake = FlakyApi.new(document_failures: [response_error(429, retry_after: 2),
+                                            response_error(429, retry_after: 2)])
+    api, = build_api(fake)
+
+    with_temp_document do |path|
+      assert_raises(TelegramBot::SendError) { api.send_document(42, path) }
+    end
+    assert_equal 2, fake.document_calls, "只重投一次，仍败则抛 SendError"
+  end
+
+  def test_send_document_converts_non_429_to_send_error
+    fake = FlakyApi.new(document_failures: [response_error(400)])
+    api, = build_api(fake)
+
+    with_temp_document do |path|
+      err = assert_raises(TelegramBot::SendError) { api.send_document(42, path) }
+      assert_match(/chat_id=42/, err.message)
+    end
+    assert_equal 1, fake.document_calls, "非 429 不重投，但**必须**转成 SendError（契约统一）"
   end
 
   # --- RetryPolicy 小件 --------------------------------------------------------

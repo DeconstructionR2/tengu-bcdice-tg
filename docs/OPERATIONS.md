@@ -401,6 +401,41 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
 是**故意保持**的，别当假死重启；看到 `[T2.4] 长轮询中止：HTTP 409` 才按
 §5 红线处置。
 
+### 5.2 二轮评审修复登记（2026-10-12，同日两轮审计的第二棒）
+
+两份二审报告（minimax / deepseek）复核 T4.5-fix 后的新代码，逐项探针实证后裁定
+（int64「守卫不对称」指控经探针证伪——四文件边界行为一致且 fail-closed，不修）：
+
+1. **gem 层无退避紧密重试**（必修）：gem `client.rb:30-31` 对
+   Timeout/ConnectionFailed 是 `retry if @running` 原地重试（无 sleep、无日志），
+   RetryPolicy 从外层插不进去。修复 = `ClientPollingBackoff` prepend patch
+   （bot/telegram_api.rb）接管 `fetch_updates`：指数退避封顶 30s + 每次 warn 一行
+   （只打异常类名，Faraday message 可能夹带 token URL）；@running 契约保留；
+   ResponseError 不上 patch 层（仍归 RetryPolicy）。**gem 升级复核点已钉版本绊线
+   测试**（test_polling_backoff_test.rb，钉 2.8.1）。
+2. **send_document 契约对齐**（必修）：此前裸抛 `ResponseError`（/log end 导出
+   路径），与 send_one/answer_callback_query 的 SendError 契约不一致。已补齐：
+   429 重投一次（重投前回卷 IO）+ 非 429 转 `SendError`。
+3. **setMyCommands 双注册消除**（必修）：main.rb 显式调 + start 内部再调（T2.1
+   遗留），限流风暴期请求量翻倍。现唯一注册点 = main.rb 启动期显式调用；
+   `test_start_does_not_register_menu` 钉死。
+4. **raw 保底通道 JSON-in-JSON 二次编码**（沉睡 bug，白名单全覆盖时不可达）：
+   `raw_api_call` 旧实现把 Hash/Array 先 to_json 成字符串再整体 to_json——
+   wire 上 `{"commands":"[…]"}`。已改 `unwrap_for_json` 递归 unwrap 为原生
+   JSON 类型（form 通道的「数组编成字符串」约定不适用于 application/json body）。
+   wire 形态回归测试已补。
+5. **四个 slash handler 的 DB 故障对用户可见**（dice/settings/bank/secret 补
+   STORAGE_ERROR 兜底，对齐 custom_table/session_log）：slash 回错误文案；
+   dice 辅助轨（kind=:aux）保持静默；secret 只走 ephemeral 告知本人、回调
+   故障用 alert toast 应答。
+6. **辅助轨覆盖范围对用户明说**：闸门 = 忍杀 4 系统命令 + 通用骰式（群切 CoC
+   等系统后裸打系统专属命令不路由，用 /roll）——README 与 /help 已写明；
+   router.rb 闸门注释旧文「取全集」名不副实已订正。
+
+**Backlog（刻意不做，留档）**：RateLimiter「每群 20 条/分钟」滑窗（429 重投
+只是止痛，超 3 倍限速仍会被限）；`/log export` 重发入口；`/system` 群内
+任何人可改（计划 §8 有意放开）。
+
 ---
 
 ## 6. 紧急处置（bot 无响应时的排查顺序）
