@@ -118,13 +118,11 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 `rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
 当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
-`tengu-bcdice-tg:rollback-20261012-r2`（429 修复版 `2b7e058d799f` 的回滚锚点）、
-`tengu-bcdice-tg:rollback-20261012-r3`（T4.5-fix2 二轮评审修复版 `24899aa78fd5` 的
-回滚锚点）。`latest` 现指向 T4.5-fix3 新镜像（`1dcedfa4872c`，独立验收复核修复版：
+仅 `tengu-bcdice-tg:latest`（`1dcedfa4872c`，T4.5-fix3 独立验收复核修复版：
 raw_api_call 形状适配 / aux 闸门文档纠偏 / create_table 守卫 / 429 回卷等 10 项，
-835 runs 口径）。T4.1 时代两枚历史 tag——首版 `3046c75a16bc` 与 T4.1-review 修订版
-`e8fe36d2c172`（同 `rollback-20261012`）——属预-429-fix 版本、无回滚价值，
-**2026-10-12 已清理**（释放约 53MB）；两版代码均在 git 历史中，按需重建即可。
+835 runs 口径）。历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
+拍板的「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；**换版前仍按
+上文纪律给现役镜像留新锚点**，无锚点时的回滚走 §2.3 的 git 重建流程。
 
 ### 1.5 部署后验证（T4.5 上线时执行）
 
@@ -193,6 +191,11 @@ sudo docker run -d \
 ```
 
 换容器只换代码；账目/自定义表/log 全在数据卷，不受升级与回滚影响（计划 §9）。
+
+（2026-10-12 起历史锚点已全部清理，走「代码可重建」原则——手头无锚点时，回滚 =
+从 git 重建旧版：`git checkout <旧提交>` → rsync（§1.1 同命令）→ `docker build` →
+换容器（§2.2 ③ 同一步）；完毕 `git switch main` 回主线。常用对照：T4.5-fix2 =
+`8fbe294`、T4.5-fix（429 链修复）= `54b87cb`、现行 T4.5-fix3 = `2a2fdd6`。）
 
 ### 2.4 上游源码快照升级（另一件事）
 
