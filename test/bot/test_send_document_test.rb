@@ -268,6 +268,91 @@ class TestSendDocument < Minitest::Test
     assert_equal 2, fake.calls.size
   end
 
+  # --- 429 重投：回卷不了的 IO 不得裸抛 Errno::ESPIPE（2026-10-12 验收轮修复 [9]）---
+  #
+  # 首次尝试可能已读走半段流，故 429 重投前必须回卷 IO。但管道/套接字等**不可
+  # seek** 的 IO 上 IO#rewind 抛 Errno::ESPIPE，且它们同样 respond_to?(:rewind)——
+  # 旧实现的 `rewind if respond_to?(:rewind)` 拦不住，ESPIPE 会裸抛出本方法，
+  # 逃出「发送入口只抛 SendError」的契约。修复后的契约：回卷失败就不重投，
+  # 按原始 429 错误路径抛 SendError。
+
+  # 首次调用读走整条流并抛 429、之后成功的假 api（模拟 multipart 已消费流后失败）
+  class FlakyDocumentApi
+    attr_reader :calls, :contents
+
+    def initialize(error)
+      @error = error
+      @calls = 0
+      @contents = []
+    end
+
+    def send_document(**params)
+      @calls += 1
+      doc = params[:document]
+      io = doc.respond_to?(:io) ? doc.io : doc # FilePart 包装时读其内层 io
+      @contents << io.read if io.respond_to?(:read)
+      raise @error if @calls == 1
+
+      :fake_document
+    end
+  end
+
+  def http_429_error
+    body = { ok: false, error_code: 429, description: "Too Many Requests",
+             parameters: { retry_after: 4 } }
+    err = Telegram::Bot::Exceptions::ResponseError.allocate
+    response = Struct.new(:body).new(JSON.dump(body))
+    err.define_singleton_method(:response) { response }
+    err.define_singleton_method(:message) { "Telegram API error 429" }
+    err
+  end
+
+  def build_429_api(fake)
+    clock = BotTestHelper::FakeClock.new
+    sleeper = BotTestHelper::FakeSleeper.new(clock)
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                      api_client: BotTestHelper::FakeClient.new(fake),
+                                      sleeper: sleeper, clock: clock)
+    [api, sleeper]
+  end
+
+  def test_429_retry_is_skipped_when_io_cannot_be_rewound
+    reader, writer = IO.pipe
+    writer.write("piped bytes")
+    writer.close
+
+    fake = FlakyDocumentApi.new(http_429_error)
+    api, sleeper = build_429_api(fake)
+
+    err = assert_raises(TelegramBot::SendError) { api.send_document(77, reader) }
+
+    assert_match(/429/, err.message, "必须走原始 429 错误路径（转成 SendError）")
+    assert_equal 1, fake.calls, "不可回卷 → 不重投（重投只会发出残缺文件）"
+    assert_empty sleeper.calls, "不重投就不等待"
+    refute_predicate reader, :closed?, "调用方的 IO 生命周期归调用方"
+  ensure
+    reader.close unless reader.closed?
+    writer.close unless writer.closed?
+  end
+
+  # 对照组：可 seek 的 IO 保持既有重投行为，且回卷必须真的把流拉回起点
+  def test_429_retry_rewinds_and_resends_for_a_seekable_io
+    Tempfile.create("tengu-429") do |tf|
+      tf.binmode
+      tf.write("seekable payload")
+      tf.rewind
+
+      fake = FlakyDocumentApi.new(http_429_error)
+      api, sleeper = build_429_api(fake)
+
+      assert_equal :fake_document, api.send_document(77, tf)
+      assert_equal 2, fake.calls, "可 seek 的 IO：429 后回卷重投一次（行为不变）"
+      assert_equal ["seekable payload", "seekable payload"], fake.contents,
+                   "回卷必须真把流拉回起点，否则第二次读到空"
+      assert_equal [4], sleeper.calls, "按 retry_after=4 等待"
+    end
+  end
+
   # --- F4：raw 降级是死路，必须明确报错而不是静默发坏请求 ------------------
 
   def test_raw_fallback_raises_send_error_instead_of_sending_broken_json

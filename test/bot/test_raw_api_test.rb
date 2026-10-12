@@ -16,6 +16,22 @@ require_relative "test_helper"
 class TestRawApiCall < Minitest::Test
   include BotTestHelper
 
+  # HTTParty::Response 形状的替身（2026-10-12 验收轮修复 [1]）。
+  #
+  # 关键：**不实现 `#[]`**。真 HTTParty::Response 的 `#[]` 是 parsed_response
+  # 语义（Telegram 响应里没有 "status"/"body" 键 → 恒 nil），状态码与原始 body
+  # 只在 `.code`/`.body` 上（服务器实测留档：HTTParty 0.24.3，本机回环 200
+  # 响应 → code=200、body=原始 JSON 串、response[:status]=nil）。
+  # 旧实现按 Hash 取值，在本替身下取不到即必红——正是修复前生产降级路径的必炸形态。
+  class HttpartyShapedResponse
+    attr_reader :code, :body
+
+    def initialize(code:, body:)
+      @code = code
+      @body = body
+    end
+  end
+
   def api_with(http)
     fake = BotTestHelper::FakeApi.new
     TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
@@ -83,6 +99,35 @@ class TestRawApiCall < Minitest::Test
   end
 
   # --- 错误路径：HTTP 失败 ------------------------------------------------
+
+  # 生产执行器形状（HTTParty::Response，2026-10-12 验收轮修复 [1]）：
+  # 状态码与 body 只在 `.code`/`.body` 上，按 Hash 取值恒 nil → 旧实现在
+  # HTTP 200 上也会抛 `RawApiError: "... HTTP :"`。
+  def test_httparty_shaped_response_returns_parsed_hash_on_200
+    http = BotTestHelper::FakeHttpExecutor.new(
+      response: HttpartyShapedResponse.new(
+        code: 200,
+        body: { "ok" => true, "result" => { "message_id" => 9 } }.to_json
+      )
+    )
+    api = api_with(http)
+
+    result = api.raw_api_call("getMe")
+
+    assert_equal true, result["ok"], "HTTP 200 + 合法 JSON 必须正常返回解析后的 Hash"
+    assert_equal 9, result["result"]["message_id"]
+  end
+
+  def test_httparty_shaped_response_raises_with_the_real_status_code
+    http = BotTestHelper::FakeHttpExecutor.new(
+      response: HttpartyShapedResponse.new(code: 502, body: "Bad Gateway")
+    )
+    api = api_with(http)
+
+    err = assert_raises(TelegramBot::RawApiError) { api.raw_api_call("sendMessage") }
+    assert_match(/502/, err.message, "错误消息必须含**真实**状态码（旧实现只会打 `HTTP :`）")
+    assert_match(/Bad Gateway/, err.message, "响应体应带进错误消息")
+  end
 
   def test_non_200_raises_raw_api_error
     http = BotTestHelper::FakeHttpExecutor.new(

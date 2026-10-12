@@ -468,7 +468,10 @@ module TenguDB
       key = normalize_name(name)
       author = normalize_user_ids([author_id])&.first
       sc = normalize_scope(scope)
-      return MutationResult.invalid_argument if chat.nil? || key.nil? || author.nil?
+      # sc.nil? 必须与兄弟方法（rename/publish/edit/delete/list/count）同口径：
+      # 非法 scope 字符串经 normalize_scope 得 nil，漏判会让 nil 直接进 INSERT，
+      # 撞 scope 列的 NOT NULL 约束后被 rescue 误报 already_exists（2026-10-12 验收轮修复 [3]）
+      return MutationResult.invalid_argument if chat.nil? || key.nil? || author.nil? || sc.nil?
 
       # 公共行只由发布产生（见上）
       return MutationResult.invalid_argument if sc == SCOPE_PUBLIC

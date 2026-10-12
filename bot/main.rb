@@ -149,13 +149,15 @@ rescue StandardError => e
 end
 
 # 本 bot 的 username（供 router 校验 `/cmd@BotName` 的 @后缀）。
-# 取不到就降级为 nil（= 不校验），单 bot 部署下不影响正确性。
+# 取不到就留 nil —— **fail-closed**：router.bot_matched? 对 nil 一律拒答
+# （带 @后缀的命令全部不响应），宁可静默也不抢别的 bot 的命令。
 # 失败不阻断启动：这是锦上添花项，不是启动前置。
 bot_username =
   begin
     api.api_client.api.get_me.username
   rescue StandardError => e
-    warn("[T2.4] 取 bot username 失败（@后缀校验降级为不校验）：#{e.class}")
+    warn("[T2.4] 取 bot username 失败（带 @后缀的命令将一律静默拒答，" \
+         "不带 @后缀的命令不受影响）：#{e.class}")
     nil
   end
 

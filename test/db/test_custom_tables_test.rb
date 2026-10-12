@@ -140,6 +140,19 @@ class TestCustomTables < Minitest::Test
     assert_equal 0, @ct.count_for(chat_id: CHAT), "被拒的入参不得留下任何行"
   end
 
+  # 2026-10-12 验收轮修复 [3]：非法 scope 字符串此前漏判 sc.nil? ——
+  # normalize_scope 对不认识的 scope 返回 nil，nil 直接进 INSERT 撞 scope 列的
+  # NOT NULL 约束，被 rescue SQLite3::ConstraintException 误报成 already_exists
+  # （同群同名的假象）。兄弟方法（rename/publish/edit/delete/list/count）都有
+  # sc.nil? 守卫，这里补齐同口径。
+  def test_create_table_rejects_an_unknown_scope_string
+    result = @ct.create_table(chat_id: CHAT, name: "错scope表", author_id: AUTHOR,
+                              scope: "bogus")
+
+    assert result.invalid_argument?, "非法 scope 必须 invalid_argument（不是 already_exists）"
+    assert_equal 0, @ct.count_for(chat_id: CHAT), "被拒的入参不得留下任何行"
+  end
+
   def test_create_table_rejects_inverted_datarange_bounds
     result = @ct.create_table(chat_id: CHAT, name: "倒挂表", author_id: AUTHOR,
                               datarange: TenguDB::DataRange.new(

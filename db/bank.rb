@@ -258,9 +258,14 @@ module TenguDB
     # 结算：查账出流水 **并立即清零**（天狗 getRecordResult，result/end 两入口共用）
     #
     # 天狗的顺序是「先读 → 出报表 → 再删」，且账本不存在时**直接早退不删**。
-    # 删除失败时整条输出退化为错误文案（也在返回值里体现：deleted=false）。
+    # 删除失败时**本层抛异常**（不吞——见下面 DELETE 处注释，由 handler/router
+    # 兜底）；返回值第三位 deleted 在真 DB 路径上恒为 true，false 只出现在注入
+    # 了会失败的 bank 的测试里，handler 侧另备了该分支的用户可见失败文案。
+    # （2026-10-12 验收轮修复：本注释旧文写「删除失败时整条输出退化为错误文案
+    #   （也在返回值里体现：deleted=false）」——DB 层并不走那条路，属死描述。）
     #
-    # @return [Array(BankRecord, Boolean, Boolean)] [账本(nil=查无此账), 是否查到了账, 是否查不到=false 时不必看]
+    # @return [Array(BankRecord, Boolean, Boolean)]
+    #   [账本(nil=查无此账), 是否查到了账, 是否清零成功（本层恒 true）]
     def statement(chat_id:, thread_id: nil)
       chat = normalize_chat_id(chat_id)
       raise InvalidArgument, "chat_id" if chat.nil?

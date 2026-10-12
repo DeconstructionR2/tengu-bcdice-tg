@@ -463,12 +463,19 @@ module TelegramBot
         # 重投前回卷 IO——首次尝试可能已读走半段流（FilePart 内包 UploadIO）。
         # retry 不触发 ensure（ensure 只在最终退出时跑），IO 不会在重投前被关。
         if e.error_code.to_i == 429 && retries < RetryPolicy::SEND_MAX_RETRIES
-          retries += 1
-          io.rewind if io.respond_to?(:rewind)
-          delay = RetryPolicy.retry_after_seconds(e) || 2
-          warn("[telegram_api] 文档发送遇 429 限流（chat_id=#{chat_id}），#{delay}s 后重投一次")
-          @sleeper.call(delay)
-          retry
+          # 重投前**必须**回卷 IO（见 rewind_for_retry）。回卷不了就不重投——
+          # 重投只会从已读到的位置继续读，发出残缺文件（2026-10-12 验收轮
+          # 修复 [9]：旧实现让不可 seek IO 的 Errno::ESPIPE 裸抛出本方法，
+          # 逃出「发送入口只抛 SendError」的契约）。
+          if rewind_for_retry(io)
+            retries += 1
+            delay = RetryPolicy.retry_after_seconds(e) || 2
+            warn("[telegram_api] 文档发送遇 429 限流（chat_id=#{chat_id}），#{delay}s 后重投一次")
+            @sleeper.call(delay)
+            retry
+          else
+            warn("[telegram_api] 文档发送遇 429 但 IO 不可回卷（#{io.class}），放弃重投")
+          end
         end
         raise SendError, format_send_error(e, params)
       ensure
@@ -641,8 +648,13 @@ module TelegramBot
       body = params.transform_values { |v| unwrap_for_json(v) }
 
       response = @http_executor.call(url, body)
-      status = response[:status] || response["status"]
-      raw = response[:body] || response["body"] || ""
+      # 2026-10-12 验收轮修复 [1]：生产执行器返回 **HTTParty::Response**，它的
+      # `#[]` 是 parsed_response 语义（Telegram 响应里没有 "status"/"body" 键
+      # → 恒 nil），状态码与原始 body 只在 `.code`/`.body` 上。旧实现按 Hash
+      # 取值 → HTTP 200 也会抛 `RawApiError: "... HTTP :"`（沉睡 bug：gem 白名单
+      # 全覆盖时不可达，一旦降级兜底就是坏的）。取形状的统一收口见
+      # http_status_and_body（纯 Hash 响应保持兼容）。
+      status, raw = http_status_and_body(response)
 
       unless status.to_i == 200
         raise RawApiError, "#{method} HTTP #{status}: #{truncate_for_log(raw)}"
@@ -676,6 +688,22 @@ module TelegramBot
       end
     end
 
+    # 429 重投前的 IO 回卷（2026-10-12 验收轮修复 [9]）。
+    #
+    # IO#rewind 在**不可 seek** 的 IO（管道/套接字等）上抛 Errno::ESPIPE，而这类
+    # 对象同样 `respond_to?(:rewind)`——旧实现的 `io.rewind if io.respond_to?(:rewind)`
+    # 拦不住它，异常会裸抛出 send_document（调用方只应看到 SendError）。
+    #
+    # @return [Boolean] true = 已回到流首（可安全重投）；false = 回卷不了（不重投）
+    def rewind_for_retry(io)
+      return false unless io.respond_to?(:rewind)
+
+      io.rewind
+      true
+    rescue StandardError
+      false
+    end
+
     # 这个 NoMethodError 是不是"gem 白名单没收录该端点"的信号？
     #
     # 判别依据是 **receiver**：`Telegram::Bot::Api#method_missing` 在
@@ -704,6 +732,23 @@ module TelegramBot
       HTTParty.post(url,
                     body: body.to_json,
                     headers: { "Content-Type" => "application/json" })
+    end
+
+    # 从执行器返回值里取「状态码 / 原始 body」（2026-10-12 验收轮修复 [1]）。
+    #
+    # 两种形状都要收：
+    #   - 生产：default_http_executor 返回 HTTParty::Response → `.code`/`.body`
+    #     （实测该对象的 `#[]` 取 "status"/"body" 恒 nil，见 raw_api_call 注释）；
+    #   - 测试：FakeHttpExecutor 返回纯 Hash（Symbol 或 String 键）→ 原样兼容。
+    # body 为 nil（如 204 之类无体响应）时按空串处理，交由「非 JSON」分支报错。
+    #
+    # @return [Array(Object, String)] [状态码, 原始 body]
+    def http_status_and_body(response)
+      if response.respond_to?(:code) && response.respond_to?(:body)
+        [response.code, response.body.to_s]
+      else
+        [response[:status] || response["status"], response[:body] || response["body"] || ""]
+      end
     end
 
     # 递归 unwrap 成原生 JSON 可序列化形态：gem 类型（to_compact_hash）→ 纯

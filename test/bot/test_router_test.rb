@@ -646,19 +646,39 @@ class TestRouter < Minitest::Test
     refute router.bot_matched?("anything"), "未注入 username 时不得响应任何 @后缀命令"
   end
 
-  def test_edited_message_is_routed
+  # 编辑消息**一律跳过**（router.rb 的 extract_message 契约：edited_message?
+  # 以 Message#edit_date 非 nil 判别）。理由：对编辑重掷会产生两个不同的随机
+  # 结果（「哪次算数」混乱）且是刷骰向量——打错了请重发一条。
+  #
+  # 2026-10-12 验收轮修复 [5]：旧用例（test_edited_message_is_routed）的
+  # fixture 漏设 edit_date，于是假绿地断言「编辑后的消息同样应可路由」，
+  # 与自己命名的契约（以及 router.rb 的契约）相反。现按契约钉两种入站形态。
+  def test_edited_message_is_skipped
     seen = []
     @router.register(:aux) { |ctx| seen << ctx[:text]; nil }
-    edited = Telegram::Bot::Types::Update.new(
-      update_id: 11,
-      edited_message: Telegram::Bot::Types::Message.new(
-        message_id: 500, date: 1, chat: { id: CHAT_ID, type: "supergroup" },
+
+    # 形态 (a)：Update(edited_message:) —— gem 的 current_message 会取到该 Message
+    @router.dispatch(
+      Telegram::Bot::Types::Update.new(
+        update_id: 11,
+        edited_message: Telegram::Bot::Types::Message.new(
+          message_id: 500, date: 1, edit_date: 2,
+          chat: { id: CHAT_ID, type: "supergroup" },
+          from: { id: 42, is_bot: false, first_name: "T" }, text: "2d6"
+        )
+      )
+    )
+
+    # 形态 (b)：裸 Message（带 edit_date）直接 dispatch（长轮询实际 yield 的形状）
+    @router.dispatch(
+      Telegram::Bot::Types::Message.new(
+        message_id: 501, date: 1, edit_date: 2,
+        chat: { id: CHAT_ID, type: "supergroup" },
         from: { id: 42, is_bot: false, first_name: "T" }, text: "2d6"
       )
     )
-    @router.dispatch(edited)
 
-    assert_equal ["2d6"], seen, "编辑后的消息同样应可路由"
+    assert_empty seen, "编辑消息一律跳过：不路由、不重掷（两种入站形态都要挡）"
   end
 
   # --- 辅助轨判定的独立断言（防回归）---------------------------------------

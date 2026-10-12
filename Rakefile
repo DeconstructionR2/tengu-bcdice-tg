@@ -6,7 +6,8 @@
 # 任务：
 #   - test:default  跑 test/test_ext_game_system_commands.rb（T1.1④ 自研 runner）
 #   - spike         跑 test/spike_t1_1.rb（四项机制一次性验证）
-#   - test          上面两个连跑
+#   - test           **= :default 的别名**（只跑引擎层 toml；spike 不连跑，
+#                    连跑走 full / verify —— 2026-10-12 修复轮与 task 定义对齐）
 #   - 单文件筛选走环境变量：TEST_TARGET=NinjaSlayer2 rake test
 #
 # 设计要点：
@@ -76,8 +77,10 @@ task :spike_t16_js do
   sh "node scripts/spike_t1_6.js"
 end
 
-# rake test 时默认连跑 spike + 引擎层测试，回归一气呵成
-desc "全量：spike（4 项机制）+ 引擎层 toml 测试（默认全量）"
+# full：spike + 引擎层测试连跑，回归一气呵成。
+# ⚠️ 这**不是** `rake test` 的默认行为——`test` 只是 :default 的别名
+# （2026-10-12 修复轮澄清：本注释旧文写「rake test 时默认连跑」，与 task 定义相反）。
+desc "全量：spike（4 项机制）+ 引擎层 toml 测试"
 task full: %i[spike default]
 
 # 完整回归：引擎层 + bot 层（T2.1 起两个框架分任务）

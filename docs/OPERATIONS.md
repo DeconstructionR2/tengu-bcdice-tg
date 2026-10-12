@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 814）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 835）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
