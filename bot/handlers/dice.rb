@@ -67,8 +67,19 @@ module TelegramBot
       end
 
       # 全部可用 ID（升序），供 /system 报「可用示例」
+      #
+      # 逐项取 ID（filter_map + 逐项 rescue）：任何一个规则类缺 ID 常量/取常量
+      # 时炸掉，都只丢**那一个**系统，不把整张列表清空（2026-10-12 评审加固；
+      # 当前钉版 gem 实测 338 类全有 ID，本守卫是防未来 gem 升级引入无 ID 类）。
+      # 外层整体 rescue 仍留：BCDice.all_game_systems 本身炸掉时回 []。
       def system_ids
-        ::BCDice.all_game_systems.map { |k| k::ID }.sort
+        ::BCDice.all_game_systems.filter_map do |klass|
+          begin
+            klass::ID
+          rescue StandardError, NameError
+            nil
+          end
+        end.sort
       rescue StandardError
         []
       end

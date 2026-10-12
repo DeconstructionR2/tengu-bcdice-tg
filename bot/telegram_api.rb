@@ -8,8 +8,10 @@
 #      **每聊天** ≥1 秒配速（key 只含 chat_id，话题不是独立限流桶）、
 #      parse_mode 可配置（默认纯文本，§13 第 7 项拍板）；
 #   2. 长轮询循环封装（包 telegram-bot-ruby 的 Client#listen），
-#      **逐消息错误兜底**——单条消息异常不得杀死循环；
-#   3. 启动时 setMyCommands 注册主轨菜单（§6），/secret 带 is_ephemeral=true；
+#      **逐消息错误兜底**——单条消息异常不得杀死循环；轮询层瞬态故障
+#      （429/5xx/Faraday 族）退避重进、不杀进程（见 RetryPolicy，2026-10-12 修复）；
+#   3. 启动时 setMyCommands 注册主轨菜单（§6），/secret 带 is_ephemeral=true，
+#      瞬态故障有界退避重试（同 RetryPolicy）；
 #   4. raw_api_call 薄封装：gem 白名单端点不支持的方法/参数走此通道（计划 §12 R2）；
 #   5. token 解析：TENGU_ENV=='test' 时取 TELEGRAM_BOT_TOKEN_TEST，否则正式 token。
 #
@@ -126,6 +128,83 @@ module TelegramBot
   end
 
   # --------------------------------------------------------------------------
+  # RetryPolicy：瞬态故障退避重试策略（2026-10-12 双评审实证修复）
+  #
+  # 背景（生产崩溃链，容器 RestartCount=10 实证）：
+  #   fetch_updates 撞 429 → gem 只 rescue Timeout/ConnectionFailed
+  #   （gem client.rb:30-31）→ ResponseError 冒泡出 listen → main.rb 无兜底
+  #   → 进程退出 → --restart unless-stopped 拉起 → 启动期 setMyCommands 又撞
+  #   限流/Faraday 超时 → exit(1) → 重启循环。429 与网络抖动是同一条链的
+  #   两个触发源，本模块统一收口。
+  #
+  # 策略：
+  #   - 瞬态可重试：HTTP 429 / 500 / 502 / 503 / 504 + Faraday 网络错误族；
+  #   - 致命不重试：401/404（token 无效/吊销——配置错误，重试无意义）、
+  #     409（双轮询红线，见 docs/OPERATIONS.md §5 互斥操作法——静默重试会
+  #     掩盖「真有第二个轮询者」）、400 及其它 4xx（请求本身有问题）；
+  #   - 退避：429 优先按响应 parameters.retry_after；否则指数退避 2/4/8/16…
+  #     封顶。所有 warn 只打 error_code / 异常类名，**不打 e.message**
+  #     （响应体/URL 可能夹带 token——与 SendError 同一条纪律）。
+  # --------------------------------------------------------------------------
+  module RetryPolicy
+    TRANSIENT_HTTP_CODES = [429, 500, 502, 503, 504].freeze
+
+    # 启动期注册：有界重试（退避封顶 30s，10 次 ≈ 4.5 分钟），耗尽仍失败则
+    # 上抛 → main.rb 分码给文案后 exit(1)，交容器重启策略。有界而非无限：
+    # 启动期的「真起不来」必须在 RestartCount 与日志里可见，静默空转更难排查。
+    REGISTER_MAX_ATTEMPTS = 10
+    REGISTER_BACKOFF_CAP = 30
+
+    # 轮询期：无界重试（退避封顶 60s）——长循环的职责就是待在场上，瞬态风暴
+    # （限流/网络抖动/Telegram 服务端故障）不该让进程退场。计数在成功吃到
+    # 事件时清零，即统计口径是「连续失败次数」。
+    POLL_BACKOFF_CAP = 60
+
+    # 发送：429 重投一次。**只重投 429**——被限流的请求确定未被执行（无重复
+    # 消息风险）；5xx 不重投（请求可能已落库，重投会重复发消息）。
+    SEND_MAX_RETRIES = 1
+
+    # retry_after 钳制上限：防异常/恶意响应把进程挂死在一次 sleep 里
+    RETRY_AFTER_CAP = 300
+
+    module_function
+
+    # 瞬态 ResponseError？（429/5xx；401/404/409/400 等一律非瞬态）
+    def transient_response_error?(error)
+      error.is_a?(Telegram::Bot::Exceptions::ResponseError) &&
+        TRANSIENT_HTTP_CODES.include?(error.error_code.to_i)
+    end
+
+    # 429 响应体 parameters.retry_after（秒）；取不到/异常值 → nil（回落退避）。
+    # gem 的 data 对合法 JSON 响应体给字符串键，对解析失败的响应体给符号键
+    # （exceptions/response_error.rb），两种形状都要吃。
+    def retry_after_seconds(error)
+      data = error.data
+      params = data["parameters"] || data[:parameters]
+      return nil unless params.is_a?(Hash)
+
+      seconds = (params["retry_after"] || params[:retry_after]).to_i
+      seconds.positive? ? [seconds, RETRY_AFTER_CAP].min : nil
+    rescue StandardError
+      nil # data 解析失败（非 JSON 响应体等）不挡重试主路
+    end
+
+    # 指数退避：2, 4, 8, 16, 32…封顶 cap（秒）
+    def backoff(attempt, cap:)
+      [2.0 * (2**(attempt - 1)), cap].min
+    end
+
+    # 日志标签：ResponseError 打 HTTP 码，其余打异常类名（绝不打 message）
+    def label(error)
+      if error.is_a?(Telegram::Bot::Exceptions::ResponseError)
+        "HTTP #{error.error_code}"
+      else
+        error.class.to_s
+      end
+    end
+  end
+
+  # --------------------------------------------------------------------------
   # TelegramApi 主类
   # --------------------------------------------------------------------------
   class TelegramApi
@@ -190,6 +269,7 @@ module TelegramBot
       params[:parse_mode] = @parse_mode if @parse_mode
       params[:message_thread_id] = thread_id if thread_id
 
+      retries = 0
       begin
         @api_client.api.send_message(**params)
       rescue NoMethodError => e
@@ -201,6 +281,18 @@ module TelegramBot
 
         raw_api_call("sendMessage", params)
       rescue Telegram::Bot::Exceptions::ResponseError => e
+        # 429 重投一次（2026-10-12 评审实证：发送失败此前只在 router 层 warn
+        # 一行、返回 []，用户看到「bot 掷了骰却没回」）。**只重投 429**：被限流
+        # 的请求确定未被执行，重投不会重复发消息；5xx 不重投（请求可能已落库，
+        # 重投会重复发消息）。retry_after ≥ RateLimiter 的 1s 间隔，故重投前
+        # 不再过配速器。重投仍败 → 抛 SendError（router 记 warn，不杀轮询）。
+        if e.error_code.to_i == 429 && retries < RetryPolicy::SEND_MAX_RETRIES
+          retries += 1
+          delay = RetryPolicy.retry_after_seconds(e) || 2
+          warn("[telegram_api] 发送遇 429 限流（chat_id=#{chat_id}），#{delay}s 后重投一次")
+          @sleeper.call(delay)
+          retry
+        end
         raise SendError, format_send_error(e, params)
       end
     end
@@ -321,28 +413,57 @@ module TelegramBot
     #
     # 错误兜底契约：**单条 update 的异常不得杀死循环**——记日志后继续下一条。
     # 这是硬要求（计划 §2 "错误兜底"）：一条脏消息不该让骰子 bot 下线。
+    #
+    # 2026-10-12 修复（双评审实证，RestartCount=10）：契约扩展到**轮询层**——
+    # fetch_updates 抛出的瞬态故障（429/5xx/Faraday 族）同样不得杀死进程：
+    # 退避后重进 listen。非瞬态（401 token 失效 / 409 双轮询红线 / 400 等）
+    # 原样上抛，由 main.rb 兜底 exit(1)。全貌见 RetryPolicy 模块注释。
     def start(dispatch: nil, &block)
       register_main_commands
       dispatch ||= block || ->(_update) {}
 
       client = @api_client
-      client.listen do |event|
-        # ⚠️ gem 接缝实测：listen yield 的是 handle_update 的返回值 =
-        # update.current_message——**通常是 Message 而非 Update**
-        # （gem client.rb:41-47）。Router#extract_message 两种形态都收。
-        # current_message 的准确语义 = 「第一个非 nil 属性」（update.rb），故：
-        #   - 无负载 update（如纯 my_chat_member 以外的空壳）会 yield nil
-        #     → Router 对 nil 安全（extract_message 直接返回 nil）；
-        #   - callback_query update 会 yield **CallbackQuery 本体**（不是 nil），
-        #     edited_message update 会 yield **编辑后的 Message**（edit_date 非 nil）
-        #     → 两者由 Router#extract_message 显式守卫跳过（2026-10-12 验收期
-        #     实证更正：本注释早先版本「callback_query 会被 yield nil」是错的）。
-        begin
-          dispatch.call(event)
-        rescue StandardError => e
-          # 兜底：记录后继续，绝不把异常抛出循环
-          warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}")
+      poll_retries = 0 # 连续失败计数：成功吃到任何事件即清零
+      begin
+        client.listen do |event|
+          # ⚠️ gem 接缝实测：listen yield 的是 handle_update 的返回值 =
+          # update.current_message——**通常是 Message 而非 Update**
+          # （gem client.rb:41-47）。Router#extract_message 两种形态都收。
+          # current_message 的准确语义 = 「第一个非 nil 属性」（update.rb），故：
+          #   - 无负载 update（如纯 my_chat_member 以外的空壳）会 yield nil
+          #     → Router 对 nil 安全（extract_message 直接返回 nil）；
+          #   - callback_query update 会 yield **CallbackQuery 本体**（不是 nil），
+          #     edited_message update 会 yield **编辑后的 Message**（edit_date 非 nil）
+          #     → 两者由 Router#extract_message 显式守卫跳过（2026-10-12 验收期
+          #     实证更正：本注释早先版本「callback_query 会被 yield nil」是错的）。
+          begin
+            dispatch.call(event)
+          rescue StandardError => e
+            # 兜底：记录后继续，绝不把异常抛出循环
+            warn("[telegram_api] dispatch 处理失败（已忽略该条）: #{e.class}")
+          end
+          poll_retries = 0 # 能吃到事件 = 链路健康，连续失败计数清零
         end
+      rescue Telegram::Bot::Exceptions::ResponseError => e
+        raise unless RetryPolicy.transient_response_error?(e)
+
+        poll_retries += 1
+        delay = RetryPolicy.retry_after_seconds(e) ||
+                RetryPolicy.backoff(poll_retries, cap: RetryPolicy::POLL_BACKOFF_CAP)
+        warn("[telegram_api] 长轮询遇瞬态故障（#{RetryPolicy.label(e)}），" \
+             "#{delay}s 后重新拉取（连续第 #{poll_retries} 次，进程保持）")
+        @sleeper.call(delay)
+        retry # 重进 listen；gem 的 offset 在 client options 里续传，不丢更新
+      rescue Faraday::Error => e
+        # gem 的 fetch_updates 已原地重试 Timeout/ConnectionFailed（client.rb:30-31，
+        # 且无退避）；能走到这里的是它没兜住的 Faraday 族（SSLError 等）——
+        # 退避后重进，同一条「不杀进程」契约。
+        poll_retries += 1
+        delay = RetryPolicy.backoff(poll_retries, cap: RetryPolicy::POLL_BACKOFF_CAP)
+        warn("[telegram_api] 长轮询遇网络错误（#{RetryPolicy.label(e)}），" \
+             "#{delay}s 后重新拉取（连续第 #{poll_retries} 次，进程保持）")
+        @sleeper.call(delay)
+        retry
       end
     end
 
@@ -369,6 +490,12 @@ module TelegramBot
     # （types/bot_command.rb:9），且 gem 不校验参数 → 直传即可（已离线实证）。
     # 仅当 gem 因**白名单缺失**（receiver == api 本体）才降级走 raw_api_call；
     # 其它 NoMethodError 一律原样抛出（见 gem_endpoint_missing? 的两条理由）。
+    #
+    # 瞬态故障（429/5xx/Faraday 族）有界退避重试（2026-10-12 生产实证：
+    # 启动期撞限流此前被 main.rb 当配置错误 exit(1)，叠加容器重启策略形成
+    # 重启循环）。重试耗尽或非瞬态（401/404/409…）原样抛出，由 main.rb
+    # 按 error_code 分文案兜底。raw 降级通道（RawApiError）不参与重试——
+    # 走到那里说明 gem 白名单缺端点，属部署事故而非瞬态。
     def register_main_commands
       commands = MainMenu::ENTRIES.map do |e|
         attrs = { command: e[:command], description: e[:description] }
@@ -376,12 +503,25 @@ module TelegramBot
         Telegram::Bot::Types::BotCommand.new(**attrs)
       end
 
+      attempts = 0
       begin
         @api_client.api.set_my_commands(commands: commands)
       rescue NoMethodError => e
         raise unless gem_endpoint_missing?(e)
 
         raw_api_call("setMyCommands", { commands: commands_payload })
+      rescue Telegram::Bot::Exceptions::ResponseError, Faraday::Error => e
+        raise unless e.is_a?(Faraday::Error) || RetryPolicy.transient_response_error?(e)
+
+        attempts += 1
+        raise if attempts > RetryPolicy::REGISTER_MAX_ATTEMPTS
+
+        delay = RetryPolicy.retry_after_seconds(e) ||
+                RetryPolicy.backoff(attempts, cap: RetryPolicy::REGISTER_BACKOFF_CAP)
+        warn("[telegram_api] 注册主轨菜单遇瞬态故障（#{RetryPolicy.label(e)}），" \
+             "#{delay}s 后重试（#{attempts}/#{RetryPolicy::REGISTER_MAX_ATTEMPTS}）")
+        @sleeper.call(delay)
+        retry
       end
     end
 

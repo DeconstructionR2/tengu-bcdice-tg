@@ -210,6 +210,10 @@ module TenguDB
     # 允许几千字的标题刷屏；100 字符对「第一次跑团/XX战役#3」绰绰有余。
     MAX_NAME_LENGTH = 100
 
+    # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL、精度
+    # 损失——同 db/custom_tables.rb / db/bank.rb 的守卫口径，2026-10-12 补齐）
+    INT64_MAX = 9_223_372_036_854_775_807
+
     LOG_COLUMNS = "id, chat_id, thread_id, name, status, created_at, ended_at"
     # list 是 JOIN 式查询（session_logs + 条目数子查询），列必须带表前缀
     LOG_COLUMNS_QUALIFIED = "l.id, l.chat_id, l.thread_id, l.name, l.status, " \
@@ -435,13 +439,18 @@ module TenguDB
     end
 
     # chat_id 归一：nil / 空串 / 0 一律拒绝（0 在 Ruby 里是真值，不拦会把行
-    # 写进 chat_id=0 黑洞；同 bank.rb / migration.rb 的 0 守卫纪律）
+    # 写进 chat_id=0 黑洞；同 bank.rb / migration.rb 的 0 守卫纪律）；
+    # 超 int64 上界同样拒绝（SQLite 动态类型会静默存成 REAL，custom_tables.rb
+    # 同款守卫，2026-10-12 补齐口径）
     def normalize_chat_id(chat_id)
       return nil if chat_id.nil?
       return nil if chat_id.is_a?(String) && chat_id.strip.empty?
 
       id = chat_id.to_i
-      id.zero? ? nil : id
+      return nil if id.zero?
+      return nil if id.abs > INT64_MAX
+
+      id
     end
 
     # 名字归一：strip 后必须非空、≤ MAX_NAME_LENGTH、不含控制字符（\n 会拆坏

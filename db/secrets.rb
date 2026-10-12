@@ -77,12 +77,19 @@ module TenguDB
 
     private
 
-    # user_id 恒为正整数；nil / 空 / 非数字一律视作「不是本人」（fail-closed）
+    # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
+    # 同 custom_tables.rb / bank.rb 的守卫口径，2026-10-12 补齐）
+    INT64_MAX = 9_223_372_036_854_775_807
+
+    # user_id 恒为正整数且不超 int64；nil / 空 / 非数字 / 超界一律视作
+    # 「不是本人」（fail-closed）
     def normalize_user_id(value)
       return nil if value.nil?
       return nil if value.is_a?(String) && value.strip.empty?
 
       int = value.to_i
+      return nil if int > INT64_MAX
+
       int.positive? ? int : nil
     end
   end
@@ -116,6 +123,10 @@ module TenguDB
     # 留着只是为了让 PK 冲突不被当成致命错误抛给 router）
     ID_ATTEMPTS = 3
 
+    # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
+    # 同 custom_tables.rb / bank.rb 的守卫口径，2026-10-12 补齐）
+    INT64_MAX = 9_223_372_036_854_775_807
+
     COLUMNS = "id, chat_id, thread_id, user_id, command, result_text, created_at"
 
     # @param connection [TenguDB::Connection, nil] nil = DB 层单连接
@@ -145,7 +156,9 @@ module TenguDB
       text = result_text.to_s
       return [nil, ArgumentError] if text.empty?
       return [nil, ArgumentError] if chat_id.to_i.zero?
+      return [nil, ArgumentError] if chat_id.to_i.abs > INT64_MAX
       return [nil, ArgumentError] if user_id.to_i <= 0
+      return [nil, ArgumentError] if user_id.to_i > INT64_MAX
 
       chat = chat_id.to_i
       thread = thread_id.to_i

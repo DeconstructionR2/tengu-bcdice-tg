@@ -40,7 +40,7 @@ db/  SQLite（WAL 单连接）：settings / bank / custom_tables / secrets / ses
 
 - **零上游改动**：扩展类继承 `NinjaSlayer`/`NinjaSlayer2` 注册新 ID，`bundle update bcdice` 无冲突升级（`docs/EXTENDING.md` 轴②）
 - **暗骰**：Bot API 10.3 原生 ephemeral（约 25 分钟消失）+ secrets 表持久化兜底 + 公开按钮走常规消息
-- **部署**：Docker multi-stage——builder 阶段跑 `rake verify`（测试失败=镜像不产出），runtime 非 root 精简镜像（88.3MB）
+- **部署**：Docker multi-stage——builder 阶段跑 `rake verify`（测试失败=镜像不产出），runtime 非 root 精简镜像（303MB，2026-10-12 实测 `e8fe36d2c172`）
 
 ## 部署（速览）
 

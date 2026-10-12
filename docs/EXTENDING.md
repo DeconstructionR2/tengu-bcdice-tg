@@ -92,8 +92,12 @@ bot 侧 /system <ID> 走 EngineResolver → BCDice.game_system_class（**ID 大�
 别混为一谈。
 
 ⚠️ 列举系统名的雷（评审 E2）：不要写 `BCDice.all_game_systems.map(&:ID)`——
-上游有的系统**没有 ID 常量**（实测 FutariSousa_Korean 会 NoMethodError；仓库
-dice.rb:70-74 的同款写法靠 rescue 兜成空列表，不崩但静默）。要列举先过滤
+上游历史上出现过**没有 ID 常量**的系统，这种写法会整体 NoMethodError。
+（口径订正 2026-10-12：本条早先称「实测 FutariSousa_Korean 会 NoMethodError」，
+经复核该断言已过时——当前钉版 gem 里它有 ID（`FutariSousa:Korean`），
+全量 338 类实测 0 个缺 ID。本条保留为**防御性建议**：未来 gem 升级仍可能
+引入无 ID 类。）仓库 dice.rb 的 `EngineResolver.system_ids` 已改为逐项
+filter_map + 逐项 rescue：单个类缺 ID 只丢那一项，不再整表清空。要列举先过滤
 `const_defined?(:ID)`；只要确认「能不能用」，优先 `game_system_class("YourId")`
 单点查询（找不到返回 nil）。
 

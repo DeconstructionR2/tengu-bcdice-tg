@@ -110,15 +110,38 @@ api = TelegramBot::TelegramApi.new(token: token)
 
 # 启动期错误处理：菜单注册失败就别硬起（否则长轮询起来也是空菜单），
 # 但**必须**给出可读报错，且不得回显 token（响应体/URL 都可能带）。
+#
+# 2026-10-12 修复（双评审实证，RestartCount=10）：register_main_commands 内部
+# 已对瞬态故障（429/5xx/Faraday 族）做有界退避重试（RetryPolicy），能落到
+# 这里的只剩「非瞬态错误」或「重试耗尽」——按 error_code 分文案，
+# 不再把 429 误报成「token 无效/已吊销」（旧文案曾误导排障方向）。
 begin
   api.register_main_commands
 rescue Telegram::Bot::Exceptions::ResponseError => e
-  warn("[T2.4] 注册主轨菜单失败：Telegram API 拒绝请求。")
-  warn("[T2.4] 常见原因：token 无效/已吊销，或该 token 属于另一个 bot。")
-  warn("[T2.4] 请核对 .env 中 #{TelegramBot::Config.token_key} 的值（agent 不打印、不代填）。")
+  case e.error_code.to_i
+  when 401, 404
+    warn("[T2.4] 注册主轨菜单失败：Telegram API 拒绝请求（HTTP #{e.error_code}）。")
+    warn("[T2.4] 常见原因：token 无效/已吊销，或该 token 属于另一个 bot。")
+    warn("[T2.4] 请核对 .env 中 #{TelegramBot::Config.token_key} 的值（agent 不打印、不代填）。")
+  when 409
+    warn("[T2.4] 注册主轨菜单失败：HTTP 409 Conflict——另一个同 token 的轮询者在线（双轮询红线）。")
+    warn("[T2.4] 处置：docs/OPERATIONS.md §5 互斥操作法；先清掉多余容器/进程再起本 bot。")
+  when 429
+    wait = TelegramBot::RetryPolicy.retry_after_seconds(e)
+    warn("[T2.4] 注册主轨菜单失败：Telegram 限流（HTTP 429#{wait ? "，retry after #{wait}s" : ""}），" \
+         "已退避重试 #{TelegramBot::RetryPolicy::REGISTER_MAX_ATTEMPTS} 次仍受限。")
+    warn("[T2.4] 常见原因：限流风暴，或同 token 的其它实例在刷请求；容器重启会再试。")
+  else
+    warn("[T2.4] 注册主轨菜单失败：HTTP #{e.error_code}（非瞬态错误，或退避重试后仍失败）。")
+  end
+  exit(1)
+rescue Faraday::Error => e
+  # 网络错误退避重试耗尽：只打印异常类名，**不打印 e.message**（消息体可能夹带敏感串）。
+  warn("[T2.4] 注册主轨菜单失败：#{e.class}（已退避重试 #{TelegramBot::RetryPolicy::REGISTER_MAX_ATTEMPTS} 次仍不通；异常消息不打印，防泄漏）。")
+  warn("[T2.4] 常见原因：网络不通/代理问题，或 Telegram API 临时故障；容器重启会再试。")
   exit(1)
 rescue StandardError => e
-  # 兜底：网络错误（Faraday）/RawApiError 等不得裸 stack trace 崩出。
+  # 兜底：RawApiError 等不得裸 stack trace 崩出。
   # 只打印异常类名，**不打印 e.message**（消息体可能夹带敏感串）。
   warn("[T2.4] 注册主轨菜单失败：#{e.class}（异常消息不打印，防泄漏）。")
   warn("[T2.4] 常见原因：网络不通/代理问题，或 Telegram API 临时故障；稍后重试。")
@@ -269,4 +292,21 @@ router = TelegramBot::Router.new(
 
 # 长轮询（零入境端口，计划 §3 决7）。单条消息异常由 api.start 内部兜底，
 # 不会杀死循环；router 自身对 handler 异常也逐条兜底（T2.3）。
-api.start(dispatch: router.method(:dispatch))
+# 轮询层瞬态故障（429/5xx/Faraday 族）由 api.start 内部退避重进
+# （RetryPolicy，2026-10-12 修复）；这里只兜**致命**出口——非瞬态
+# ResponseError（401 token 失效 / 409 双轮询红线等）与意外异常。
+# 此前这里无兜底：fetch_updates 的 429 裸崩出 → 进程退出 → 容器重启循环
+# （生产实证 RestartCount=10）。exit(1) 前给可读报错，不回显 token。
+begin
+  api.start(dispatch: router.method(:dispatch))
+rescue Telegram::Bot::Exceptions::ResponseError => e
+  if e.error_code.to_i == 409
+    warn("[T2.4] 长轮询中止：HTTP 409 Conflict——另一个同 token 的轮询者在线（双轮询红线，docs/OPERATIONS.md §5）。")
+  else
+    warn("[T2.4] 长轮询中止：Telegram API 致命错误（HTTP #{e.error_code}；响应体不打印，防泄漏）。")
+  end
+  exit(1)
+rescue StandardError => e
+  warn("[T2.4] 长轮询中止：#{e.class}（异常消息不打印，防泄漏）。")
+  exit(1)
+end

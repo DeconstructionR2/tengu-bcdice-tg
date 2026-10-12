@@ -22,8 +22,8 @@
 | 备份目录 | `/opt/backups/<project>/` | `tengu-YYYYMMDD.db` ×7；属主 <deploy-user>、mode 700 |
 | 备份互斥锁 | `/opt/<project>/.backup.lock` | `scripts/backup.sh` 的 flock 自互斥（env `TENGU_BACKUP_LOCK` 可覆盖） |
 | 备份日志 | `/opt/<project>/backup.log` | cron 追加重定向（脚本自身不投递，见 §4.1）；**日志是时间序列：判断「今日是否已备」以 /opt/backups 实物为准，日志只作旁证** |
-| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 88.3MB content；tag 纪律见 §1.4 |
-| 容器名 | `tengu-bcdice-tg` | T4.5 上线后存在；**当前（上线前）无容器在跑** |
+| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 303MB（2026-10-12 实测 `e8fe36d2c172`；早前记的 88.3MB 是 T4.1 首建值，已过时）；tag 纪律见 §1.4 |
+| 容器名 | `tengu-bcdice-tg` | T4.5 已上线，**在跑**（`unless-stopped`）；曾现 429 重启循环（RestartCount=10），2026-10-12 修复，见 §5.1 |
 | 证据目录 | `/opt/<project>/t4.1-evidence/`、`t4.2-evidence/` | 构建/冒烟/备份验证日志（机器本地，不入库） |
 | 健康监控脚本 | `<agent-home>/scripts/server-health-check.sh` | 检查项 7 = 备份新鲜度（T4.2 登记，§4.1） |
 
@@ -327,7 +327,7 @@ sudo docker image prune -f           # 换版构建后回收中间层（T4.1 实
 |---|---|---|
 | 群里零反应，容器 `running` | `docker logs --tail 200`：有启动序列行吗？无 → 容器在崩溃循环（看 `ps -a` 状态与 `RestartCount`，排 §4.3）；有 → 查 409（§5）与 DB 锁 | t4.1 §5 |
 | **菜单没注册上**（客户端菜单缺命令/点了没反应） | 启动日志应含「[T3.1] 主轨菜单已注册：…」；缺它 = `register_main_commands` 失败 → 启动**裸退 exit 1**（不会带病长轮询）。日志看「[T2.4] 注册主轨菜单失败」行，常见=token 无效/属于另一个 bot/网络不通；核对 `.env` 的 `token_key` 分支（`TENGU_ENV`）后重启 | `bot/main.rb` L113-126、`bot/config.rb` |
-| **409 双轮询** | 见 §5 红线：同 token 出现了第二个 getUpdates 消费者。症状 = 容器 `RestartCount` 持续上涨 / dev 进程突然死亡；日志异常类 `Telegram::Bot::Exceptions::ResponseError` | t4.1 §5.1（gem 409 崩溃链源码实证） |
+| **409 双轮询** | 见 §5 红线：同 token 出现了第二个 getUpdates 消费者。症状 = 容器 `RestartCount` 持续上涨 / dev 进程突然死亡；2026-10-12 起日志有明确行 `[T2.4] 长轮询中止：HTTP 409 Conflict`，此前为裸 `Telegram::Bot::Exceptions::ResponseError` stack trace | t4.1 §5.1（gem 409 崩溃链源码实证）、§5.1 |
 | **ephemeral 消失**（暗骰结果/按钮不见了） | 已知行为：ephemeral 消息约 25 分钟后消失（T2.2 客户端实测）。补救：本人打 `/secret last` 重取（复用原行、本人限定）；要留痕就用「公开」按钮走常规消息 | t2.2 报告、t3.1 报告 |
 | **导出失败**（`/log end` 回执报发送失败） | 回执措辞「导出文件发送失败——录制数据已保留」时数据都在库里（`/log list` 可见）；查 logs 里 `SendError`（网络抖动/请求被 400）。重发入口未实现（backlog `/log export`），目前只能人工从 DB 导 | t3.5 报告 §4 决策 11、§6.3 |
 | **DB 锁**（`BusyException` 结构性 warn） | 设计口径 = 单进程单连接（`db/connection.rb`）。确认没有第二个进程连同一库：`pgrep -af 'bot/main.rb'`；`sudo lsof /opt/<project>/data/tengu.db*`（连 `.db-wal`/`.db-shm` 挂件一起查——dev 进程可能只持挂件句柄）。典型来源 = dev 进程与容器共用同一 data 目录 | `db/connection.rb` 注释、t3.2 评审 |
@@ -339,15 +339,18 @@ sudo docker image prune -f           # 换版构建后回收中间层（T4.1 实
 ## 5. 双轮询 409 红线（dev 进程 ↔ 容器互斥操作法）
 
 **事实（T4.1 实证，源码级）**：Telegram 每个 bot 只允许一个 `getUpdates` 消费者；
-后到的请求会**终止**先到者的长轮询（409）。本仓库栈对 409 是**未捕获崩溃链**——
+后到的请求会**终止**先到者的长轮询（409）。409 在本栈属**致命错误**——
 gem `api.rb` 非 200 即 raise；`client.rb#fetch_updates` 只 rescue
-Timeout/ConnectionFailed；`bot/main.rb` 对 `listen` 无兜底 → **进程直接死**。
-容器里表现为「重启循环」，dev 进程表现为「突然消失」。
+Timeout/ConnectionFailed；409 不在瞬态重试白名单内（`RetryPolicy`，
+2026-10-12 起）→ `main.rb` 兜底打明确日志后 `exit(1)`。容器里表现为
+「重启循环 + 每轮一条 409 提示日志」，dev 进程表现为「报错退出」。
+（409 不静默重试是**有意**的：静默重试会掩盖「真有第二个轮询者」。）
 
 **规则**：同 token 的消费者全集 =（dev 进程，`TENGU_ENV=test` 用测试 token）+
-（该 token 对应容器）。**任何时刻只许一个活。** 本机现有一个 dev 测试进程在跑
-（示例：`pid <pid>`，自 2026-10-12 01:11 起）——起任何用同 token 的容器前，
-必须按下面的互斥时序处理，**不许 kill 它**：
+（该 token 对应容器）。**任何时刻只许一个活。** 现网实况（2026-10-12 复核）：
+正式容器 `tengu-bcdice-tg` 是唯一常驻消费者；早先的 dev 测试进程已退役
+（`pgrep -af 'bot/main.rb'` 在宿主机应为空，只剩容器内进程）。若日后要再起
+同 token 的临时容器/dev 进程，必须按下面的互斥时序处理，**不许 kill 常驻者**：
 
 ```bash
 PGREP_PID=$(pgrep -f 'bot/main.rb')   # ① 找到 dev 进程（pid 会变，别写死）
@@ -366,6 +369,34 @@ kill -CONT "$PGREP_PID"               # ⑤ 恢复（读掉缓冲空响应、立
   或测试用途容器——两个 token 可以各自有一个实例，同 token 内永远单实例。
 - `docker stop`/`docker kill` 属「手动停止」语义（§4.3）：停了不会被策略拉起，
   这正好用于「换容器」与「恢复演练」期间保证零消费者。
+
+### 5.1 429/瞬态故障崩溃链（2026-10-12 实证，已修复）
+
+**事故回放（生产实证，RestartCount=10）**：2026-10-12 凌晨限流风暴，
+`fetch_updates` 撞 `429 Too Many Requests（retry_after=5）` → gem 只 rescue
+Timeout/ConnectionFailed（`client.rb:30-31`）→ `ResponseError` 冒泡出
+`listen` → `main.rb` 对 `api.start` 无兜底 → 进程退出 → `unless-stopped`
+拉起 → 启动期 `setMyCommands` 又撞限流/超时（4 次 429 + 5 次
+Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
+「token 无效/已吊销」并 `exit(1)` → 重启循环。09:16（KST）起随风暴平息自愈。
+
+**修复（2026-10-12，双评审复核后实施）**——`bot/telegram_api.rb` 新增
+`RetryPolicy` 模块，三条契约：
+
+1. **轮询层**：瞬态故障（429/500/502/503/504 + Faraday 族）按
+   `retry_after`/指数退避（封顶 60s）重进 listen，**不杀进程**；401/404/409
+   等非瞬态上抛，`main.rb` 兜底分码打日志后 `exit(1)`。
+2. **启动注册**：同一套瞬态判定，有界重试（10 次、退避封顶 30s ≈ 4.5 分钟），
+   耗尽才 `exit(1)`——「真起不来」必须在 RestartCount 与日志里可见。
+3. **发送**：429 按 `retry_after` 重投**一次**（被限流的请求确定未执行，无重复
+   消息风险；5xx 不重投同理防重复）；仍败抛 `SendError` 走 router 既有
+   warn 通道。修复前「发送失败用户完全不可见」的根源（每群 20 条/分钟滑窗
+   未实现，连发 25 条必越限）仍在 backlog，见 `RateLimiter` 头注释。
+
+**排障要点**：日志只打 `HTTP <code>` / 异常类名，不打响应体（token 纪律）。
+看到 `[telegram_api] 长轮询遇瞬态故障` 连续刷屏 = Telegram 侧风暴中，进程
+是**故意保持**的，别当假死重启；看到 `[T2.4] 长轮询中止：HTTP 409` 才按
+§5 红线处置。
 
 ---
 

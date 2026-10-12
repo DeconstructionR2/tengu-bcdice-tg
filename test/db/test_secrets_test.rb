@@ -242,6 +242,28 @@ class TestSecrets < Minitest::Test
     refute record.owned_by?(nil)
     refute record.owned_by?(0)
     refute record.owned_by?("")
+    refute record.owned_by?(9_223_372_036_854_775_808),
+           "超 int64 的 candidate 应判非本人（fail-closed，2026-10-12 补齐界守卫）"
+  end
+
+  def test_create_rejects_ids_beyond_int64
+    int64_max = 9_223_372_036_854_775_807
+
+    record, err = @store.create(chat_id: int64_max + 1, user_id: USER,
+                                command: "SB", result_text: "r")
+    assert_nil record
+    assert_equal ArgumentError, err, "超 int64 的 chat_id 应拒（SQLite 会静默存成 REAL）"
+
+    record, err = @store.create(chat_id: BIG_CHAT_ID, user_id: int64_max + 1,
+                                command: "SB", result_text: "r")
+    assert_nil record
+    assert_equal ArgumentError, err, "超 int64 的 user_id 应拒"
+
+    # 界内边界值不误伤（守卫只拦超界）
+    record, err = @store.create(chat_id: -int64_max, user_id: int64_max,
+                                command: "SB", result_text: "r")
+    assert_nil err
+    refute_nil record
   end
 
   # --- 值绑定纪律 ---------------------------------------------------------
