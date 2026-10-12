@@ -22,7 +22,7 @@
 | 备份目录 | `/opt/backups/<project>/` | `tengu-YYYYMMDD.db` ×7；属主 <deploy-user>、mode 700 |
 | 备份互斥锁 | `/opt/<project>/.backup.lock` | `scripts/backup.sh` 的 flock 自互斥（env `TENGU_BACKUP_LOCK` 可覆盖） |
 | 备份日志 | `/opt/<project>/backup.log` | cron 追加重定向（脚本自身不投递，见 §4.1）；**日志是时间序列：判断「今日是否已备」以 /opt/backups 实物为准，日志只作旁证** |
-| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 303MB（2026-10-12 实测，三 tag 同体积）；tag 纪律见 §1.4 |
+| 镜像 | `tengu-bcdice-tg:latest`（+ 历史 tag） | 303MB（2026-10-12 实测，各 tag 同体积）；tag 纪律见 §1.4 |
 | 容器名 | `tengu-bcdice-tg` | T4.5 已上线，**在跑**（`unless-stopped`）；曾现 429 重启循环（RestartCount=10），2026-10-12 修复，见 §5.1 |
 | 证据目录 | `/opt/<project>/t4.1-evidence/`、`t4.2-evidence/` | 构建/冒烟/备份验证日志（机器本地，不入库） |
 | 健康监控脚本 | `<agent-home>/scripts/server-health-check.sh` | 检查项 7 = 备份新鲜度（T4.2 登记，§4.1） |
@@ -100,7 +100,9 @@ sudo docker run -d \
   `load_dotenv!` / Dockerfile 注释）。
 - 模板 = 仓库 `.env.example`（键位清单：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_BOT_TOKEN_TEST`、
   `TENGU_ENV`、`LOG_ROLLS`、`LOGGING_ENABLED`、`DB_PATH`）。**值由用户本人填写，
-  agent 不代写**；建议 `chmod 600`。容器内 `DB_PATH` 用默认 `/app/data/tengu.db` 即可。
+  agent 不代写**；建议 `chmod 600`。⚠️ 当前部署 `TELEGRAM_BOT_TOKEN_TEST` 与
+  生产 token 同源（§5 警告）——任何 `TENGU_ENV=test` 实例都会占用生产轮询。容器内
+  `DB_PATH` 用默认 `/app/data/tengu.db` 即可。
 - 缺 token 时 bot 会**清晰报错 exit 1**（只报键名不报值）；但此时 `--restart` 会把
   「反复退出」当崩溃——空转重启刷日志（不损坏数据）。所以：**先填 .env 再 docker run**。
 
@@ -111,6 +113,9 @@ sudo docker run -d \
 ```bash
 sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 ```
+
+同日多轮换版要给名字加 `-rN` 后缀防撞名（2026-10-12 实况：同日三轮 =
+`rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
 当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
 `tengu-bcdice-tg:t4.1-20261012`（首版 `3046c75a16bc`）、
@@ -357,6 +362,11 @@ Timeout/ConnectionFailed；409 不在瞬态重试白名单内（`RetryPolicy`，
 （`pgrep -af 'bot/main.rb'` 在宿主机应为空，只剩容器内进程）。若日后要再起
 同 token 的临时容器/dev 进程，必须按下面的互斥时序处理，**不许 kill 常驻者**：
 
+⚠️ **测试 token 与生产 token 同源**（2026-10-12 实测：仓库 `.env` 的
+`TELEGRAM_BOT_TOKEN_TEST` 与生产数据卷 token 哈希一致——原测试 bot 转正未换发）。
+因此 `TENGU_ENV=test` 的实例**不是隔离测试，是第二个生产轮询者**：正式容器在跑时
+绝不许起；要真隔离测试，必须先申请独立测试 bot 并换发该键。
+
 ```bash
 PGREP_PID=$(pgrep -f 'bot/main.rb')   # ① 找到 dev 进程（pid 会变，别写死）
 kill -STOP "$PGREP_PID"               # ② 冻结（SIGSTOP，不是 kill）
@@ -371,7 +381,8 @@ kill -CONT "$PGREP_PID"               # ⑤ 恢复（读掉缓冲空响应、立
   `Ssl` 状态往返）；脚本化时**必须加 trap 兜底**：任何失败路径先删容器再 CONT。
 - 冒烟/临时容器用完即 `docker rm -f`，别留第二个消费者。
 - 正式上线后：正式 token 的消费者只有唯一容器；测试 token 的消费者归 dev 进程
-  或测试用途容器——两个 token 可以各自有一个实例，同 token 内永远单实例。
+  或测试用途容器——两个 token 可以各自有一个实例**仅当两 token 不同源**（⚠️ 当前
+  部署同源，见上方警告），同 token 内永远单实例。
 - `docker stop`/`docker kill` 属「手动停止」语义（§4.3）：停了不会被策略拉起，
   这正好用于「换容器」与「恢复演练」期间保证零消费者。
 
@@ -437,6 +448,32 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
 **Backlog（刻意不做，留档）**：RateLimiter「每群 20 条/分钟」滑窗（429 重投
 只是止痛，超 3 倍限速仍会被限）；`/log export` 重发入口；`/system` 群内
 任何人可改（计划 §8 有意放开）。
+
+### 5.3 独立验收复核修复登记（2026-10-12，第三棒：上线后独立验收）
+
+对上线的 T4.5-fix2 代码做第三轮独立审计（逐条探针实证，10 项全部成立），修复
+随 T4.5-fix3 入镜像（commit `2a2fdd6`；构建闸门 785+835 全绿）：
+
+1. **raw_api_call 形状适配**（高，沉睡 bug）：生产执行器返回 HTTParty::Response，
+   旧实现按 Hash 取 `[:status]`/`[:body]` 恒 nil → HTTP 200 也抛 `RawApiError`。
+   取值收口到 `.code`/`.body`（Hash 兼容）；回归替身**不实现 `[]`**（旧码必红，
+   先红后绿实证）。`@http_executor` 全仓唯一消费点。
+2. **辅助轨闸门文档纠偏**（中）：闸门放行裸短词是刻意设计——默认系统下
+   `SBX`/`WSX`/`KRS` 与「难度字母+数字」（`N5`）真掷表，1 版系统下 `SOUL`/`WS`/
+   `CYBER` 等词表命令也掷表；README 与 /help 删「闲聊不可能误命中」绝对声称、
+   失效示例 `2d6>=4[=6]` 换为 `2d6>=4`。**闸门语义本身未动**。
+3. **create_table 补 `sc.nil?` 守卫**（中）：非法 scope 字符串不再被 NOT NULL
+   约束误报 `already_exists`（与兄弟方法同口径）。
+4. **send_document 429 回卷**（低）：不可 seek IO 回卷失败→不重投、按原始 429
+   路径转 `SendError`（旧实现裸抛 `Errno::ESPIPE` 逃出契约；可 seek 行为不变）。
+5. **编辑消息测试对齐契约**（低）：改写为「一律跳过」两形态用例 + 变异验证
+   （旧用例因 fixture 缺 `edit_date` 假绿）。
+6. **订正类**（低）：README/OPERATIONS 计数 814→835；Rakefile/main.rb/bank.rb
+   注释与行为对齐。
+
+**建议项（行为性，刻意未动，留档）**：`/settings aux off` 会顺带建群级行
+（`db/settings.rb`）；读取侧 `to_i` 宽容属刻意设计（`custom_tables.rb` 注释）；
+`db/bank.rb` chat_id 守卫无 int64 上界（写入侧已有严格校验）。
 
 ---
 
