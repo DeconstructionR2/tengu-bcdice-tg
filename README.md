@@ -8,7 +8,7 @@ BCDice 全量规则系统 + 天狗ダイス忍杀全功能，跑在单一 Ruby �
 - 天狗ダイス（忍杀）全功能移植：NSRS 發狂表、カルマロンダリング×5 派阀、キャラメイク 6 表、聖戦判定、倍率/记忆符、1版 9 表
 - 天狗银行（话题级账本）、自定义表（建/改/删/发布/掷）、暗骰（ephemeral + 公开按钮）、跑团 log 录制与导出（txt+json）
 - SQLite 单文件 WAL 持久化；Docker 三阶段镜像（构建期跑全量测试作闸门）
-- 测试基线：785 引擎 toml 确定性用例 + 835 bot/db 单元测试全绿（`bundle exec rake verify`）
+- 测试基线：785 引擎层（722 TOML 数据用例 + 63 守卫测试）+ 846 bot/db 单元测试全绿（`bundle exec rake verify`）
 
 ## 命令速查
 
@@ -51,7 +51,7 @@ db/  SQLite（WAL 单连接）：settings / bank / custom_tables / secrets / ses
 
 扩展类直接继承 `NinjaSlayer`/`NinjaSlayer2` 注册新 ID，对上游零改动，`bundle update bcdice` 无冲突升级（`docs/EXTENDING.md` 轴②）。
 
-暗骰走 Bot API 10.3 原生 ephemeral（约 25 分钟消失），secrets 表做持久化兜底，「公开」按钮走常规消息。
+暗骰走 Bot API 10.3 原生 ephemeral（约 25 分钟消失），secrets 表做持久化兜底，「公开」按钮走常规消息。**前提：bot 须为群管理员**——非管理员只有在触发动作后 15 秒内回指触发消息才能发 ephemeral（已实现自动回指入站命令；官方 Bot API「Reply Targets and Conditions」）。
 
 部署是 Docker multi-stage：builder 阶段跑 `rake verify`，测试不过镜像就不产出；runtime 是非 root 精简镜像（303MB，2026-10-12 实测）。
 
@@ -65,6 +65,8 @@ sudo docker run -d --name tengu-bcdice-tg --restart unless-stopped \
   --log-opt max-size=10m --log-opt max-file=3 \
   -v /opt/<project>/data:/app/data tengu-bcdice-tg:latest
 ```
+
+> ⚠️ 部署前提：把 bot **设为群管理员**——否则暗骰（/secret 的 ephemeral 结果）发不出来（非管理员只有 15 秒回指窗口，仅覆盖命令刚发出的瞬间）。详见 docs/OPERATIONS.md §1.5/§4.5。
 
 `.env` 放数据卷（`/opt/<project>/data/.env`），token 用户自填（脚手架 `.env.example`）。备份用 `scripts/backup.sh` 日备（sqlite3 `.backup` 在线一致，保留 7 份），另有 36h 新鲜度监控告警。
 
@@ -86,6 +88,7 @@ TEST_TARGET=NinjaSlayer2Ex bundle exec rake test   # 单表筛选
 | `docs/EXTENDING.md` | 扩展开发指南（四条轴 + 可跑示例 + 实证坑录） |
 | `docs/REFERENCES.md` | 上游钉版台账（commit hash 登记） |
 | `docs/t1.*~t4.*-report.md` | 各任务实施报告（含逐条评审处置记录与实证） |
+| `docs/t1.2-review-checklist.md` | 移植逐表人工复核签收单（进行中——「全功能移植」的最终验收以它为准） |
 | `docs/spike-t1.1-report.md` | 引擎扩展四机制实证（注册/i18n/键空间/runner） |
 
 ## 许可与致谢

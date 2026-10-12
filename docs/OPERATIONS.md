@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 835）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 846）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
@@ -118,9 +118,10 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 `rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
 当前保存的 tag（2026-10-12 实测 `sudo docker images`，会随版本演进）：
-仅 `tengu-bcdice-tg:latest`（`1dcedfa4872c`，T4.5-fix3 独立验收复核修复版：
-raw_api_call 形状适配 / aux 闸门文档纠偏 / create_table 守卫 / 429 回卷等 10 项，
-835 runs 口径）。历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
+仅 `tengu-bcdice-tg:latest`（`80161449e6d8`，T4.5-fix4 三轮复核修复版：
+publish 枚举 DoS 上限 / ephemeral 管理员前提与回指 / dice_bounds 负骰项 /
+admin 时钟回退方向 / int64 四文件统一等，846 runs 口径；基线含 fix3
+`72617a2` 全部成果）。历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
 拍板的「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；**换版前仍按
 上文纪律给现役镜像留新锚点**，无锚点时的回滚走 §2.3 的 git 重建流程。
 
@@ -137,6 +138,12 @@ sudo docker logs --tail 50 tengu-bcdice-tg
 
 随后在测试话题先打一条 `/roll SB` 验证容器内端到端掷骰（I18n→表求值→切段→发送
 四段在容器形态的首跑，登记为 T4.5 验收项，t4.1-review 评审提案 #1），再开正式群。
+
+**部署前提（暗骰可用性，2026-10-12 三审登记）**：把 bot **设为群管理员**。
+非管理员 bot 只能在触发动作后 15 秒内、回指触发消息发 ephemeral（官方
+Bot API「Reply Targets and Conditions」）——bot 侧已实现自动回指入站命令，
+但管理员身份才是可靠路径；否则 `/secret` 静默失效（日志有
+`[secret] ephemeral 发送失败` 行，排查见 §4.5）。
 
 ---
 
@@ -339,7 +346,8 @@ sudo docker image prune -f           # 换版构建后回收中间层（T4.1 实
 | 症状 | 排查/处置 | 出处 |
 |---|---|---|
 | 群里零反应，容器 `running` | `docker logs --tail 200`：有启动序列行吗？无 → 容器在崩溃循环（看 `ps -a` 状态与 `RestartCount`，排 §4.3）；有 → 查 409（§5）与 DB 锁 | t4.1 §5 |
-| **菜单没注册上**（客户端菜单缺命令/点了没反应） | 启动日志应含「[T3.1] 主轨菜单已注册：…」；缺它 = `register_main_commands` 失败。2026-10-12 起瞬态故障（429/5xx/网络）先退避重试 10 次（约 4.5 分钟，日志行 `[telegram_api] 注册主轨菜单遇瞬态故障`），耗尽或非瞬态才 exit 1——日志看「[T2.4] 注册主轨菜单失败」的**分码**行：401/404=token 无效或属于另一个 bot；429=限流风暴；409=双轮询（§5）；Faraday 类=网络不通。核对 `.env` 的 `token_key` 分支（`TENGU_ENV`）后重启 | `bot/main.rb` L111-149、`bot/config.rb` |
+| **菜单没注册上**（客户端菜单缺命令/点了没反应） | 启动日志应含「[T3.1] 主轨菜单已注册：…」；缺它 = `register_main_commands` 失败。2026-10-12 起瞬态故障（429/5xx/网络）先退避重试 10 次（共 11 次调用、约 3.5 分钟，日志行 `[telegram_api] 注册主轨菜单遇瞬态故障`），耗尽或非瞬态才 exit 1——日志看「[T2.4] 注册主轨菜单失败」的**分码**行：401/404=token 无效或属于另一个 bot；429=限流风暴；409=双轮询（§5）；Faraday 类=网络不通。核对 `.env` 的 `token_key` 分支（`TENGU_ENV`）后重启 | `bot/main.rb` L111-149、`bot/config.rb` |
+| **暗骰静默**（`/secret` 打了没反应、看不到结果） | 最常见原因 = **bot 不是群管理员**：非管理员只能在触发动作后 15 秒内、且回指触发消息（`reply_parameters.ephemeral_message_id`）才能发 ephemeral（官方 Bot API「Reply Targets and Conditions」；2026-10-12 起已自动回指入站命令，管理员身份则随时可发）。处置：把 bot 设为群管理员；日志查 `[secret] ephemeral 发送失败` 行 | Bot API 官方文档（2026-10-12 核对）、`bot/telegram_api.rb#send_ephemeral` |
 | **409 双轮询** | 见 §5 红线：同 token 出现了第二个 getUpdates 消费者。症状 = 容器 `RestartCount` 持续上涨 / dev 进程突然死亡；2026-10-12 起日志有明确行 `[T2.4] 长轮询中止：HTTP 409 Conflict`，此前为裸 `Telegram::Bot::Exceptions::ResponseError` stack trace | t4.1 §5.1（gem 409 崩溃链源码实证）、§5.1 |
 | **ephemeral 消失**（暗骰结果/按钮不见了） | 已知行为：ephemeral 消息约 25 分钟后消失（T2.2 客户端实测）。补救：本人打 `/secret last` 重取（复用原行、本人限定）；要留痕就用「公开」按钮走常规消息 | t2.2 报告、t3.1 报告 |
 | **导出失败**（`/log end` 回执报发送失败） | 回执措辞「导出文件发送失败——录制数据已保留」时数据都在库里（`/log list` 可见）；查 logs 里 `SendError`（网络抖动/请求被 400）。重发入口未实现（backlog `/log export`），目前只能人工从 DB 导 | t3.5 报告 §4 决策 11、§6.3 |
@@ -405,7 +413,8 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
 1. **轮询层**：瞬态故障（429/500/502/503/504 + Faraday 族）按
    `retry_after`/指数退避（封顶 60s）重进 listen，**不杀进程**；401/404/409
    等非瞬态上抛，`main.rb` 兜底分码打日志后 `exit(1)`。
-2. **启动注册**：同一套瞬态判定，有界重试（10 次、退避封顶 30s ≈ 4.5 分钟），
+2. **启动注册**：同一套瞬态判定，有界重试（10 次重试 = 共 11 次调用、退避
+   封顶 30s、合计约 3.5 分钟），
    耗尽才 `exit(1)`——「真起不来」必须在 RestartCount 与日志里可见。
 3. **发送**：429 按 `retry_after` 重投**一次**（被限流的请求确定未执行，无重复
    消息风险；5xx 不重投同理防重复）；仍败抛 `SendError` 走 router 既有
@@ -475,8 +484,48 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
    注释与行为对齐。
 
 **建议项（行为性，刻意未动，留档）**：`/settings aux off` 会顺带建群级行
-（`db/settings.rb`）；读取侧 `to_i` 宽容属刻意设计（`custom_tables.rb` 注释）；
-`db/bank.rb` chat_id 守卫无 int64 上界（写入侧已有严格校验）。
+（`db/settings.rb`）；读取侧 `to_i` 宽容属刻意设计（`custom_tables.rb` 注释）。
+~~`db/bank.rb` chat_id 守卫无 int64 上界~~ → 已在 §5.4 修复（四文件统一闭区间
+口径，含 INT64_MIN）。
+
+---
+
+### 5.4 三轮复核修复登记（2026-10-12，第四棒：跨三方向深度审查）
+
+第三路审查（本地实跑复核 + 官方文档核对）提出的问题逐条探针实证后修复，
+随本轮镜像入库（构建闸门 785+846 全绿）：
+
+1. **`/ct publish` 无上界枚举 DoS**（高，必修）：`data_verification` 的
+   `(min..max).reject` 实枚举——任意群成员 `dice set 表 a 9d999999999`（出目
+   范围 89.99 亿档）后 `publish` 即挂死单线程 bot。修复：出目档位上限
+   `PUBLISH_RANGE_CAP = 10_000`，超限快速拒发并明示（母本同款无界枚举，
+   登记为与母本差异③）。Timeout 守护钉测。
+2. **ephemeral 非管理员前提**（高）：`send_ephemeral` 旧只带
+   `receiver_user_id`——按官方文档，非管理员 bot 还必须带
+   `callback_query_id` 或 `reply_parameters.ephemeral_message_id`（15 秒窗口）。
+   修复：`send_ephemeral` 支持 `reply_to_ephemeral_id` 透传，secret handler
+   自动从入站命令消息取 `ephemeral_message_id` 回指；README/OPERATIONS 声明
+   「bot 须为群管理员」前提（§1.5、§4.5）。注：保持静默契约——发送失败仍
+   不在群里出声（warn 记录），不塞公开报错。
+3. **`dice_bounds` 负数骰项颠倒**（中）：`2-3d6` 旧算 {min:-1, max:-16}
+   （min>max，报错文案自相矛盾）。修正减骰区间语义 [−N*S, −N]；顺带修
+   大写 D 骰项（`2D6` 曾被当常量 2）；面数 ≤0 判不可解析。
+4. **小修串**：`send_document` 的 `File.open` 移入 begin（缺文件不再裸抛
+   `Errno::ENOENT`，统一 SendError）；`admin.rb` 时钟故障回退方向反转修复
+   （旧返回 0.0 → 缓存恒命中**永不失效**，fail-open；现返回 +∞ → 恒过期、
+   每次真查）；int64 界守卫四文件统一为含 INT64_MIN 的闭区间（bank 此前
+   收、其余三家拒的单值差异消除；bank.rb 的 chat_id 守卫一并补齐）；
+   5 个数据脚本加 `references/src/` 存在性守卫（新克隆不再深处
+   MODULE_NOT_FOUND，给 REFERENCES.md 指引）；`SendError` 挂
+   `segments_sent`（多段发送中途失败时 router warn 可区分「全没发/发了一半」）。
+5. **订正**：`REGISTER_MAX_ATTEMPTS` 注释精度（10 次重试=11 次调用、合计
+   约 3.5 分钟，旧写 4.5）；README 测试计数拆分口径（722 TOML + 63 守卫 +
+   846 bot/db）。
+
+**登记不改（评审 Low 项，复核后确认无本层可修）**：`answerCallbackQuery`
+自身失败时「兜底必答」失效——Telegram 是唯一通道，本层只能 warn；
+多段发送「发了一半、log 一条不记」——正确修法需切段级送达回执重构
+录制契约，改动面大于收益，warn 已带段数，留 backlog。
 
 ---
 

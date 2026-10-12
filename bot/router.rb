@@ -643,12 +643,15 @@ module TelegramBot
     # 发送：thread_id 非 nil 时透传（forum 不掉话题，§3 决6）。
     #
     # 发送失败**只记不抛**——一条发不出去的消息不该让 router 崩掉整轮。
+    # 多段发送中途失败时 SendError 带 segments_sent（已发出段数），warn 里带上
+    # 以区分「全没发」与「发了一半」（2026-10-12 三审）。
     def send(chat_id, text, thread_id: nil, **extra)
       return [] if text.to_s.empty?
 
       @api.send_text(chat_id, text, thread_id: thread_id, **extra)
     rescue StandardError => e
-      warn_line("[router] 发送失败（chat_id=#{chat_id}）：#{e.class}")
+      detail = e.respond_to?(:segments_sent) && e.segments_sent.to_i.positive? ? "，已发出 #{e.segments_sent} 段后中断" : ""
+      warn_line("[router] 发送失败（chat_id=#{chat_id}#{detail}）：#{e.class}")
       []
     end
 

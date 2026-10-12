@@ -143,14 +143,17 @@ class TestSessionLogs < Minitest::Test
 
   def test_start_rejects_chat_ids_beyond_int64
     int64_max = 9_223_372_036_854_775_807
-    [int64_max + 1, -(int64_max + 2), "99999999999999999999999"].each do |bad|
+    int64_min = -9_223_372_036_854_775_808
+    [int64_max + 1, int64_min - 1, "99999999999999999999999"].each do |bad|
       result = @store.start(chat_id: bad, name: "x")
       assert_equal TenguDB::LogResult::INVALID_ARGUMENT, result.status,
                    "#{bad.inspect} 超 int64 应拒（SQLite 动态类型会静默存成 REAL）"
     end
 
-    # 界内边界值不误伤（守卫只拦超界）
+    # 界内边界值不误伤（守卫只拦超界；含 INT64_MIN——它是合法 int64、SQLite
+    # 存得住，2026-10-12 三审统一四文件闭区间口径）
     assert @store.start(chat_id: -int64_max, name: "x").ok?, "-int64_max 是合法 chat_id"
+    assert @store.start(chat_id: int64_min, name: "y").ok?, "INT64_MIN 是合法 int64，应收"
   end
 
   def test_full_state_machine

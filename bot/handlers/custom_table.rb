@@ -1101,12 +1101,18 @@ module TelegramBot
       # ==================================================================
       #
       # 返回 nil = 通过；否则是给用户看的错误文案。
-      # ⚠️ 与母本的两处差异（登记，见报告 §4 决策 6）：
+      # ⚠️ 与母本的三处差异（登记，见报告 §4 决策 6）：
       #   ① 母本的算式累计有 JS 字符串拼接 quirk（常量项逐字拼成字符串——
       #      `1d6+5` 这类**正常**带常量骰式就会触发，min 被拼成 "15" 致发布
       #      误拒），本实现按**整数语义**计算，属有意修复而非遗漏。
       #   ② 母本只跳过 isUse=true；**骰式含 +x 时**（其 help 明示「判定できないから
       #      スキップ」）本实现同样跳过——两条并列。
+      #   ③ 出目枚举加**上限**（2026-10-12 三审实证 DoS：母本同款无界枚举在
+      #      Discord 同样成立，但单线程服务不能留这个口子）：`9d999999999`
+      #      这类骰式的出目范围是 89.99 亿档，`(min..max)` 实枚举会挂死进程。
+      #      真实跑团表档位≪上限；超限直接拒发并明示。
+      PUBLISH_RANGE_CAP = 10_000
+
       def data_verification(table)
         return nil if table.datarange.is_use
         return nil if addition_dice?(table.dice)
@@ -1117,6 +1123,11 @@ module TelegramBot
 
         min = ranges.map { |r| r[:min] }.min
         max = ranges.map { |r| r[:max] }.max
+
+        if max - min + 1 > PUBLISH_RANGE_CAP
+          return "出目范围过大（#{min}~#{max}，共 #{max - min + 1} 档），无法发布——" \
+                 "单表出目档位上限 #{PUBLISH_RANGE_CAP}（防爆保护，正常表不会碰到）。"
+        end
 
         missing = (min..max).reject { |i| table.data.key?(i.to_s) }
         unless missing.empty?
@@ -1133,6 +1144,11 @@ module TelegramBot
       end
 
       # 一条骰式的 [min, max]（母本 :49-73 的整数语义版）
+      #
+      # 负骰项（减骰，如 `2-3d6` 里的 `-3d6`）：减去 NdS 的真实区间是
+      # [−N*S, −N]（2026-10-12 三审实证旧实现 min/max 颠倒：`2-3d6` 曾算出
+      # {min:-1, max:-16}）。面数 ≤0（`1d0`/`1d-6`）不是合法骰项 → 整条骰式
+      # 判为不可解析（返回 nil，由 filter_map 丢弃；与 +x 跳过口径一致）。
       def dice_bounds(expr)
         min = 0
         max = 0
@@ -1140,11 +1156,19 @@ module TelegramBot
           term = term.strip
           next if term.empty?
 
-          if term.include?("d")
-            times, sides = term.split("d", 2)
+          if term.match?(/d/i)
+            times, sides = term.downcase.split("d", 2)
             t = times.to_i
-            min += t
-            max += t * sides.to_i
+            s = sides.to_i
+            return nil if s <= 0
+
+            if t >= 0
+              min += t
+              max += t * s
+            else
+              min += t * s
+              max += t
+            end
           else
             min += term.to_i
             max += term.to_i

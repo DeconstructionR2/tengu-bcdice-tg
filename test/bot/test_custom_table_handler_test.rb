@@ -22,6 +22,7 @@
 
 require "minitest/autorun"
 require "logger"
+require "timeout"
 require_relative "test_helper"
 require_relative "../../bot/router"
 require_relative "../../bot/handlers/dice"
@@ -710,6 +711,56 @@ class TestCustomTableHandler < Minitest::Test
 
     assert_includes ct_call("publish 钳表"), "已发布为公共表",
                     "isUse 时跳过校验（publishTable.js:18）"
+  end
+
+  # --- 发布校验的防爆与边界（2026-10-12 三审修复钉测） --------------------------
+
+  def test_publish_rejects_absurdly_large_dice_range_fast
+    # 三审实证 DoS：`9d999999999` 的出目范围 = 89.99 亿档，旧实现
+    # `(min..max).reject` 实枚举会挂死单线程 bot。上限 10_000 档，
+    # 超限必须**快速**拒发（Timeout 守护断言它不再枚举）。
+    seed_table("防爆表")
+    ct_call("dice set 防爆表 a 9d999999999")
+
+    out = nil
+    Timeout.timeout(5) { out = ct_call("publish 防爆表") }
+
+    assert_includes out, "出目范围过大"
+    assert_includes out, "上限"
+    refute_nil table("防爆表"), "拒发不许动表"
+    assert_nil @ct.fetch(chat_id: 0, name: "防爆表", scope: :public)
+  end
+
+  def test_publish_negative_dice_term_reports_coherent_range
+    # 三审实证：`2-3d6` 旧算出 {min:-1, max:-16}（min>max），报错文案自相矛盾。
+    # 修正后减骰区间 = [2-18, 2-3] = -16~-1，缺失清单应按该口径报。
+    seed_table("负骰表")
+    ct_call("dice set 负骰表 a 2-3d6")
+
+    out = ct_call("publish 负骰表")
+
+    assert_includes out, "出目 -16", "减骰项区间应为 -16~-1（旧实现颠倒成 -1~-16）"
+    assert_includes out, "没有登记数据"
+    refute_nil table("负骰表")
+  end
+
+  def test_publish_rejects_zero_sided_dice_as_unparseable
+    seed_table("零面表")
+    ct_call("dice set 零面表 a 1d0")
+
+    assert_includes ct_call("publish 零面表"), "表没有可解析的骰式",
+                    "0 面骰不是合法骰项，整条骰式按不可解析处理"
+  end
+
+  def test_publish_accepts_uppercase_d_in_bounds
+    # DICE_EXPR_PATTERN 放行大写 D，dice_bounds 曾只认小写（"2D6" 被当常量 2）。
+    # 修后大小写同口径：2D6 出目范围 2~12。
+    seed_table("大写表")
+    ct_call("dice set 大写表 a 2D6")
+
+    out = ct_call("publish 大写表")
+    assert_includes out, "出目 2,3,4,5,6,7,8,9,10,11,12 没有登记数据",
+                    "大写 D 应按骰项解析（范围 2~12），不是常量 2"
   end
 
   def test_publish_skips_verification_when_a_dice_has_plus_x

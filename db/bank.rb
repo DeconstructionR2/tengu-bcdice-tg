@@ -412,7 +412,10 @@ module TenguDB
       return nil if chat_id.is_a?(String) && chat_id.strip.empty?
 
       id = chat_id.to_i
-      id.zero? ? nil : id
+      return nil if id.zero?
+      return nil unless within_int64?(id) # int64 界守卫（四文件同口径，2026-10-12 三审补齐）
+
+      id
     end
 
     def within_int64?(value)

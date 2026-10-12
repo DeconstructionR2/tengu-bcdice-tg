@@ -410,6 +410,19 @@ class TestBank < Minitest::Test
     assert_equal 0, @conn.get_first_value("SELECT count(*) FROM bank_record").to_i
   end
 
+  def test_chat_id_beyond_int64_is_refused_and_boundary_accepted
+    int64_max = 9_223_372_036_854_775_807
+    int64_min = -9_223_372_036_854_775_808
+
+    [int64_max + 1, int64_min - 1].each do |bad|
+      result = @bank.save_money(chat_id: bad, amount: 100)
+      assert result.error?, "chat_id=#{bad.inspect} 超 int64 应拒（2026-10-12 三审补齐，四文件同口径）"
+    end
+
+    assert @bank.save_money(chat_id: int64_min, amount: 100).ok?, "INT64_MIN 是合法 int64，应收"
+    assert @bank.save_money(chat_id: int64_max, amount: 100).ok?, "INT64_MAX 应收"
+  end
+
   def test_clear_refuses_a_zero_chat_id
     @bank.save_money(chat_id: BIG_CHAT_ID, amount: 100)
 

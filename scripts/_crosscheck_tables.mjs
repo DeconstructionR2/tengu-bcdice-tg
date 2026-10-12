@@ -10,6 +10,13 @@ import fs from "node:fs";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// references/src/ 是 gitignore 的上游钉版快照——新克隆里没有它（2026-10-12 三审）
+if (!fs.existsSync(path.join(ROOT, "references/src"))) {
+  console.error("缺少 references/src/ 上游钉版快照（不入库）。请先按 docs/REFERENCES.md 顶部流程重取快照再运行本脚本。");
+  process.exit(1);
+}
+
 const d = JSON.parse(
   fs.readFileSync(path.join(ROOT, "references/extracted/tengu_tables.json"), "utf8")
 );

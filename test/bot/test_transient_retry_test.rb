@@ -40,7 +40,7 @@ class TestTransientRetry < Minitest::Test
 
   # 前 N 次调用抛指定异常、之后正常记录的假 api（set_my_commands / send_message）
   class FlakyApi
-    attr_reader :set_calls, :send_calls, :document_calls
+    attr_reader :set_calls, :send_calls, :document_calls, :sent_params
 
     def initialize(set_failures: [], send_failures: [], document_failures: [])
       @set_failures = set_failures
@@ -50,6 +50,7 @@ class TestTransientRetry < Minitest::Test
       @send_calls = 0
       @document_calls = 0
       @registered = nil
+      @sent_params = []
     end
 
     def set_my_commands(**_params)
@@ -59,16 +60,19 @@ class TestTransientRetry < Minitest::Test
       true
     end
 
-    def send_message(**_params)
+    def send_message(**params)
       @send_calls += 1
-      raise @send_failures.shift if @send_failures.any?
+      @sent_params << params
+      err = @send_failures.shift if @send_failures.any?
+      raise err if err # 列表里允许 nil 占位 = 该次调用成功（测多段中途失败用）
 
       :fake_message
     end
 
     def send_document(**_params)
       @document_calls += 1
-      raise @document_failures.shift if @document_failures.any?
+      err = @document_failures.shift if @document_failures.any?
+      raise err if err
 
       :fake_document
     end
@@ -298,6 +302,60 @@ class TestTransientRetry < Minitest::Test
       assert_match(/chat_id=42/, err.message)
     end
     assert_equal 1, fake.document_calls, "非 429 不重投，但**必须**转成 SendError（契约统一）"
+  end
+
+  def test_send_document_missing_file_raises_send_error_not_errno
+    api, = build_api(FlakyApi.new)
+
+    # 缺文件在 begin 外曾裸抛 Errno::ENOENT，破坏「发送入口只抛 SendError」
+    err = assert_raises(TelegramBot::SendError) do
+      api.send_document(42, "/nonexistent/tengu-no-such-file.txt")
+    end
+    assert_match(/ENOENT/, err.message, "应说明是文件不可读（类名），不泄漏路径细节")
+  end
+
+  # --- ④ 多段发送中途失败：已发段数随异常带出 ---------------------------------
+
+  def test_send_text_partial_failure_carries_segments_sent
+    fake = FlakyApi.new(send_failures: [nil, response_error(400)])
+    api, = build_api(fake)
+
+    text = ("a" * 4000) + "\n" + ("b" * 100) # 两段（4096 切段）
+    err = assert_raises(TelegramBot::SendError) { api.send_text(42, text) }
+    assert_equal 1, err.segments_sent, "第 2 段失败时已发出 1 段——随异常带出（router warn 可区分半发）"
+    assert_equal 2, fake.send_calls
+  end
+
+  def test_send_text_single_segment_failure_has_zero_segments_sent
+    fake = FlakyApi.new(send_failures: [response_error(400)])
+    api, = build_api(fake)
+
+    err = assert_raises(TelegramBot::SendError) { api.send_text(42, "x") }
+    assert_equal 0, err.segments_sent
+  end
+
+  # --- ⑤ ephemeral 回指接线（非管理员 bot 的 15 秒窗口路径） ------------------
+
+  def test_send_ephemeral_wires_reply_parameters_when_given
+    fake = FlakyApi.new
+    api, = build_api(fake)
+
+    api.send_ephemeral(42, "结果", user_id: 5, reply_to_ephemeral_id: 999)
+
+    params = fake.sent_params.last
+    assert_equal({ receiver_user_id: 5 }, params[:ephemeral_message_parameters])
+    assert_equal({ ephemeral_message_id: 999 }, params[:reply_parameters],
+                 "非管理员 bot 的 ephemeral 必须回指触发消息（Bot API Reply Targets and Conditions）")
+  end
+
+  def test_send_ephemeral_omits_reply_parameters_without_reply_id
+    fake = FlakyApi.new
+    api, = build_api(fake)
+
+    api.send_ephemeral(42, "结果", user_id: 5)
+
+    refute fake.sent_params.last.key?(:reply_parameters),
+           "管理员场景不带 reply_parameters（不带也成立，不多发字段）"
   end
 
   # --- RetryPolicy 小件 --------------------------------------------------------

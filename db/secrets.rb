@@ -123,9 +123,11 @@ module TenguDB
     # 留着只是为了让 PK 冲突不被当成致命错误抛给 router）
     ID_ATTEMPTS = 3
 
-    # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
-    # 同 custom_tables.rb / bank.rb 的守卫口径，2026-10-12 补齐）
+    # int64 上下界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
+    # 同 custom_tables.rb / bank.rb 的守卫口径，含 INT64_MIN 闭区间，
+    # 2026-10-12 三审统一四文件口径；user_id 另守「恒正」域规则）
     INT64_MAX = 9_223_372_036_854_775_807
+    INT64_MIN = -9_223_372_036_854_775_808
 
     COLUMNS = "id, chat_id, thread_id, user_id, command, result_text, created_at"
 
@@ -156,7 +158,7 @@ module TenguDB
       text = result_text.to_s
       return [nil, ArgumentError] if text.empty?
       return [nil, ArgumentError] if chat_id.to_i.zero?
-      return [nil, ArgumentError] if chat_id.to_i.abs > INT64_MAX
+      return [nil, ArgumentError] unless chat_id.to_i.between?(INT64_MIN, INT64_MAX)
       return [nil, ArgumentError] if user_id.to_i <= 0
       return [nil, ArgumentError] if user_id.to_i > INT64_MAX
 

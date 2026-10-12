@@ -259,11 +259,23 @@ class TestSecrets < Minitest::Test
     assert_nil record
     assert_equal ArgumentError, err, "超 int64 的 user_id 应拒"
 
-    # 界内边界值不误伤（守卫只拦超界）
+    # 界内边界值不误伤（守卫只拦超界；INT64_MIN 是合法 int64，2026-10-12 三审
+    # 统一四文件闭区间口径后收录）
     record, err = @store.create(chat_id: -int64_max, user_id: int64_max,
                                 command: "SB", result_text: "r")
     assert_nil err
     refute_nil record
+
+    int64_min = -9_223_372_036_854_775_808
+    record, err = @store.create(chat_id: int64_min, user_id: USER,
+                                command: "SB", result_text: "r")
+    assert_nil err
+    refute_nil record, "INT64_MIN 作 chat_id 应收（SQLite 存得住）"
+
+    record, err = @store.create(chat_id: int64_min - 1, user_id: USER,
+                                command: "SB", result_text: "r")
+    assert_nil record
+    assert_equal ArgumentError, err, "INT64_MIN-1 超界应拒"
   end
 
   # --- 值绑定纪律 ---------------------------------------------------------

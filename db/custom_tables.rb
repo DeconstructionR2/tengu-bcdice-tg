@@ -106,9 +106,11 @@ require "json"
 require_relative "connection"
 
 module TenguDB
-  # int64 上界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
-  # db/bank.rb 同款守卫；kimi T3.3 评审提案 #6）
+  # int64 上下界（SQLite INTEGER 列是动态类型，超界值会被静默存成 REAL——
+  # db/bank.rb 同款守卫；kimi T3.3 评审提案 #6。界为含 INT64_MIN 的闭区间，
+  # 2026-10-12 三审统一四文件口径）
   INT64_MAX = 9_223_372_036_854_775_807
+  INT64_MIN = -9_223_372_036_854_775_808
 
   # --------------------------------------------------------------------------
   # DataRange：datarange 的值对象（isUse / max / min，**null = 不设限**）
@@ -261,7 +263,7 @@ module TenguDB
       # 比较侧 fail-open 方向反了，必须与写入侧 normalize_user_ids 同款严格
       int = value.is_a?(Integer) ? value : Integer(value.to_s, exception: false)
       return nil if int.nil?
-      return nil if int.abs > INT64_MAX
+      return nil unless int.between?(INT64_MIN, INT64_MAX)
 
       int.zero? ? nil : int
     end
@@ -1039,8 +1041,8 @@ module TenguDB
       id = chat_id.to_i
       return nil if id.zero?
       # int64 界守卫（kimi T3.3 评审提案 #6）：SQLite INTEGER 列是动态类型，
-      # 超界值会被静默存成 REAL、精度损失（db/bank.rb 同款守卫）
-      return nil if id.abs > INT64_MAX
+      # 超界值会被静默存成 REAL、精度损失（含 INT64_MIN 闭区间，db/bank.rb 同款）
+      return nil unless id.between?(INT64_MIN, INT64_MAX)
 
       id
     end
@@ -1087,7 +1089,7 @@ module TenguDB
 
         int = v.is_a?(Integer) ? v : Integer(v.to_s, exception: false)
         next nil if int.nil? || int.zero?
-        next nil if int.abs > INT64_MAX # int64 界守卫（同 normalize_chat_id）
+        next nil unless int.between?(INT64_MIN, INT64_MAX) # int64 界守卫（同 normalize_chat_id）
 
         int
       end

@@ -10,7 +10,14 @@
 // ============================================================================
 
 const path = require('path');
+const fs = require('fs');
 const SRC = path.join(__dirname, '..', 'references', 'src', 'TenguDiceBot', 'TenguDiceBot');
+
+// references/src/ 是 gitignore 的上游钉版快照——新克隆里没有它（2026-10-12 三审）
+if (!fs.existsSync(SRC)) {
+  console.error('缺少 references/src/ 上游钉版快照（不入库）。请先按 docs/REFERENCES.md 顶部流程重取快照再运行本脚本。');
+  process.exit(1);
+}
 
 // ---- 确定性随机注入（在 require 之前改 util 模块导出）----
 const utilPath = path.join(SRC, 'util', 'util.js');

@@ -230,6 +230,22 @@ class TestAdmin < Minitest::Test
     assert_equal 2, fake.gem.calls.size, "TTL 过期后应重新查询（撤职才能生效）"
   end
 
+  def test_broken_clock_degrades_to_no_cache_not_never_expiring
+    # 时钟故障回退的语义必须是「恒过期」（2026-10-12 三审订正：旧实现返回 0.0，
+    # 而缓存写入的是 now+ttl=300 → 300 > 0 恒真 = 恒命中**永不失效**，方向反了
+    # ——时钟故障期间被撤职的管理员会被无限期缓存成仍有权限）。
+    gem = FakeGemApi.new(status: "administrator")
+    fake = FakeApi.new(gem)
+    admin = TelegramBot::Admin.new(api: fake, clock: -> { raise "clock boom" },
+                                   ttl: 300.0, logger: Logger.new(IO::NULL))
+
+    3.times { assert admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup") }
+
+    assert_equal 3, gem.calls.size,
+                 "时钟故障必须退化为「不用缓存」——每次都真查（恒过期）"
+    # 缓存条目可能存在（写入值 = ∞），但永不命中（∞ > ∞ 为 false）
+  end
+
   def test_false_is_not_cached
     # 缓存一个 false 会让**刚上任**的管理员在 TTL 内改不了设置；
     # 缓存一个 true 在 TTL 内仍可改设置（不限次数）——代价不对称，故只缓存 true。

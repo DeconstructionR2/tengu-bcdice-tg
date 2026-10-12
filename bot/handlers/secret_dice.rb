@@ -314,13 +314,24 @@ module TelegramBot
       end
 
       # 统一出口：一切 /secret 的对外输出都从这里走（纪律 1）
+      #
+      # 非管理员 bot 的 ephemeral 需要「15 秒窗口 + 回指触发消息」（Bot API
+      # Reply Targets and Conditions）：入站命令消息（is_ephemeral 命令本身是
+      # ephemeral）自带 ephemeral_message_id，透传给 reply_parameters 即可让
+      # 非管理员 bot 也发出暗骰（2026-10-12 三审修复，此前只带
+      # receiver_user_id = 只有管理员 bot 发得出）。
       def send_ephemeral(context, chat_id, user_id, text, button_secret_id: nil)
         return nil if text.to_s.empty?
+
+        msg = context[:message]
+        eph_id = msg.respond_to?(:ephemeral_message_id) ? msg.ephemeral_message_id : nil
 
         extra = button_secret_id ? { reply_markup: button_markup(button_secret_id) } : {}
         context[:api]&.send_ephemeral(chat_id, text,
                                       user_id: user_id,
-                                      thread_id: context[:thread_id], **extra)
+                                      thread_id: context[:thread_id],
+                                      reply_to_ephemeral_id: eph_id,
+                                      **extra)
         nil
       rescue StandardError => e
         warn_line("[secret] ephemeral 发送失败（chat_id=#{chat_id}）：#{e.class}")

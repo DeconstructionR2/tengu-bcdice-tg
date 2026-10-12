@@ -25,6 +25,12 @@ require "optparse"
 require_relative "text_rewrite"
 
 ROOT = File.expand_path("..", __dir__)
+
+# references/src/ 是 gitignore 的上游钉版快照——新克隆里没有它（2026-10-12 三审）
+unless File.directory?(File.join(ROOT, "references/src"))
+  abort("缺少 references/src/ 上游钉版快照（不入库）。请先按 docs/REFERENCES.md 顶部流程重取快照再运行本脚本。")
+end
+
 JSON_PATH = File.join(ROOT, "references/extracted/tengu_tables.json")
 OUT_NSL2EX = File.join(ROOT, "i18n/NinjaSlayer2Ex/ja_jp.yml")
 OUT_NSLEX = File.join(ROOT, "i18n/NinjaSlayerEx/ja_jp.yml")

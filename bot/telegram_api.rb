@@ -151,7 +151,8 @@ module TelegramBot
   module RetryPolicy
     TRANSIENT_HTTP_CODES = [429, 500, 502, 503, 504].freeze
 
-    # 启动期注册：有界重试（退避封顶 30s，10 次 ≈ 4.5 分钟），耗尽仍失败则
+    # 启动期注册：有界重试（10 次重试 = 共 11 次调用；指数退避 2/4/8/16 后
+    # 封顶 30s，合计约 3.5 分钟），耗尽仍失败则
     # 上抛 → main.rb 分码给文案后 exit(1)，交容器重启策略。有界而非无限：
     # 启动期的「真起不来」必须在 RestartCount 与日志里可见，静默空转更难排查。
     REGISTER_MAX_ATTEMPTS = 10
@@ -313,8 +314,16 @@ module TelegramBot
       return [] if text.to_s.empty?
 
       segments = Chunker.split(text)
+      sent = []
       segments.map do |segment|
-        send_one(chat_id, segment, thread_id: thread_id, **extra)
+        result = send_one(chat_id, segment, thread_id: thread_id, **extra)
+        sent << result
+        result
+      rescue SendError => e
+        # 多段发送中途失败：把「已发出段数」挂在异常上再抛——调用方（router）
+        # 的 warn 得以区分「全没发」与「发了一半」（2026-10-12 三审）
+        e.segments_sent = sent.size
+        raise
       end
     end
 
@@ -356,19 +365,32 @@ module TelegramBot
       end
     end
 
-    # 发送到话题内的指定用户（暗骰用）。ephemeral 特性：
-    #   - bot 为管理员时随时可发；非管理员须在触发后 15 秒内（§0.2.4）
+    # 发送到话题内的指定用户（暗骰用）。ephemeral 特性（Bot API 官方
+    # 「Reply Targets and Conditions」2026-10-12 三审核对原文）：
+    #   - bot 为群管理员时随时可发（只需 receiver_user_id）；
+    #   - 非管理员须在触发动作后 15 秒内，且**必须**带 callback_query_id 或
+    #     reply_parameters.ephemeral_message_id——故本方法支持
+    #     reply_to_ephemeral_id 透传（handler 从入站命令消息取
+    #     ephemeral_message_id；管理员场景不带也成立）；
     #   - 用户离线不保证送达（§12 R6）→ 由 T3.1 的 secrets 持久化兜底
     #
     # **extra 透传**（T3.1）：暗骰要挂内联「公开」按钮，故 `reply_markup`
     # 等标准 sendMessage 参数必须能原样透传。gem 白名单只拦方法名不校验参数
     # （见文件头），reply_markup 会经 jsonify_value → to_json 变成 Bot API
     # 要的 inline_keyboard 形状。
-    def send_ephemeral(chat_id, text, user_id:, thread_id: nil, **extra)
+    def send_ephemeral(chat_id, text, user_id:, thread_id: nil, reply_to_ephemeral_id: nil, **extra)
+      params = { ephemeral_message_parameters: { receiver_user_id: user_id } }
+      # 非管理员 bot 的 ephemeral 依赖「触发后 15 秒窗口 + 回指触发消息」
+      # （Bot API 官方：Reply Targets and Conditions）——入站命令消息的
+      # ephemeral_message_id 由 handler 从 context[:message] 取来透传。
+      # 管理员 bot 不需要它（随时可发）；带上无害。
+      if reply_to_ephemeral_id
+        params[:reply_parameters] = { ephemeral_message_id: reply_to_ephemeral_id }
+      end
       send_one(chat_id,
                text,
                thread_id: thread_id,
-               ephemeral_message_parameters: { receiver_user_id: user_id },
+               **params,
                **extra)
     end
 
@@ -434,16 +456,23 @@ module TelegramBot
     def send_document(chat_id, file, thread_id: nil, caption: nil, filename: nil)
       @rate_limiter.wait(chat_id)
 
-      opened = file.is_a?(String) ? File.open(file, "rb") : nil
-      io = opened || file
-      base = filename
-      base ||= File.basename(io.path) if io.respond_to?(:path) && io.path
-      base ||= "document"
-      document = Faraday::Multipart::FilePart.new(io, document_content_type(base), base)
-      params = { chat_id: chat_id, document: document }
-      params[:caption] = caption if caption
-      params[:message_thread_id] = thread_id if thread_id
-      params[:parse_mode] = @parse_mode if @parse_mode
+      opened = nil
+      begin
+        # 文件打开也进 begin：缺文件/权限错误的 Errno 族必须统一转 SendError
+        # （「发送入口只抛 SendError」契约，2026-10-12 三审实证此前裸抛 ENOENT）
+        opened = file.is_a?(String) ? File.open(file, "rb") : nil
+        io = opened || file
+        base = filename
+        base ||= File.basename(io.path) if io.respond_to?(:path) && io.path
+        base ||= "document"
+        document = Faraday::Multipart::FilePart.new(io, document_content_type(base), base)
+        params = { chat_id: chat_id, document: document }
+        params[:caption] = caption if caption
+        params[:message_thread_id] = thread_id if thread_id
+        params[:parse_mode] = @parse_mode if @parse_mode
+      rescue SystemCallError => e
+        raise SendError, "sendDocument 文件不可读（#{e.class}）"
+      end
 
       retries = 0
       begin
@@ -830,7 +859,12 @@ module TelegramBot
   # --------------------------------------------------------------------------
   # 异常
   # --------------------------------------------------------------------------
-  class SendError < StandardError; end
+  class SendError < StandardError
+    # 多段发送（send_text 切段）中途失败时，已发出的段数（nil/0 = 一段没发出去）。
+    # 由 send_text 在重抛前挂上，供 router 的 warn 与后续录制判定用
+    # （2026-10-12 三审：「发了一半、log 一条不记」的可观测性缺口）。
+    attr_accessor :segments_sent
+  end
   # message 含截断 300 字的 API 响应体（truncate_for_log）——**任何日志只准打
   # e.class，不准打 e.message**（kimi T2.4 评审：安全靠调用点自觉维持，故在此立约）。
   class RawApiError < StandardError; end
