@@ -244,6 +244,8 @@ class TestSecrets < Minitest::Test
     refute record.owned_by?("")
     refute record.owned_by?(9_223_372_036_854_775_808),
            "超 int64 的 candidate 应判非本人（fail-closed，2026-10-12 补齐界守卫）"
+    refute record.owned_by?("#{USER}abc"),
+           "2026-10-13：宽容 to_i 会把它折成本人——比较侧必须严格解析（fail-closed）"
   end
 
   def test_create_rejects_ids_beyond_int64

@@ -94,6 +94,16 @@ module TenguDB
     GROUP_THREAD_ID = 0
     GENERAL_THREAD_ID = 1
 
+    # int64 上下界（2026-10-13 审核：本表是第五张含 chat_id 的表，此前未纳入
+    # 四文件守卫口径——超界值会被 SQLite 静默存成 REAL、行此后按整数查询永不命中）
+    INT64_MAX = 9_223_372_036_854_775_807
+    INT64_MIN = -9_223_372_036_854_775_808
+
+    # 写路径的入参不合法（chat_id=nil/0/超 int64）：不是「用户输错命令」
+    # 而是「程序传错」（同 bank.rb 的 InvalidArgument 精神；嵌套类名避免
+    # 与 db/bank.rb 的 TenguDB::InvalidArgument 撞名依赖加载顺序）
+    class InvalidArgument < StandardError; end
+
     # @param connection [TenguDB::Connection]
     def initialize(connection = nil)
       @conn = connection || Connection.instance
@@ -111,6 +121,20 @@ module TenguDB
       return GROUP_THREAD_ID if t <= GENERAL_THREAD_ID # 负数/0/1 一律归群级
 
       t
+    end
+
+    # chat_id 归一（2026-10-13 审核：写路径守卫，口径同 session_logs /
+    # custom_tables / bank / secrets 四文件）——nil / 空串 / 0 拒绝、
+    # 超 int64 界拒绝（SQLite 动态类型会静默存成 REAL）。
+    def self.normalize_chat_id(chat_id)
+      return nil if chat_id.nil?
+      return nil if chat_id.is_a?(String) && chat_id.strip.empty?
+
+      id = chat_id.to_i
+      return nil if id.zero?
+      return nil unless id.between?(INT64_MIN, INT64_MAX)
+
+      id
     end
 
     # 入站 thread_id 是否指向**真话题**（即 /system 应写话题级而非群级）
@@ -185,7 +209,9 @@ module TenguDB
     # @param game_system [String] 规则系统 ID（**调用方已校验存在性**）
     # @return [Integer] 实际落库的 thread_id（回给 handler 判作用域文案）
     def set_game_system(chat_id, thread_id: nil, game_system:)
-      chat = chat_id.to_i
+      chat = self.class.normalize_chat_id(chat_id)
+      raise InvalidArgument, "chat_id 不合法（nil/0/超 int64）" if chat.nil?
+
       thread = self.class.normalize_thread_id(thread_id)
       id = game_system.to_s
 
@@ -204,9 +230,12 @@ module TenguDB
     # @return [Boolean] 是否真的删掉了一行（读 @conn.changes 而非 execute 的
     #   返回值——后者是结果集，DELETE 一律是空数组，拿它判断会永远 false）
     def delete(chat_id, thread_id: nil)
+      chat = self.class.normalize_chat_id(chat_id)
+      raise InvalidArgument, "chat_id 不合法（nil/0/超 int64）" if chat.nil?
+
       @conn.execute(
         "DELETE FROM chat_settings WHERE chat_id = ? AND thread_id = ?",
-        [chat_id.to_i, self.class.normalize_thread_id(thread_id)]
+        [chat, self.class.normalize_thread_id(thread_id)]
       )
       @conn.changes.positive?
     end
@@ -248,15 +277,18 @@ module TenguDB
     # @param enabled [Boolean, 0, 1, "0", "1"] 真值即写 1
     # @return [Boolean] 写入后的值（回读确认，避免 handler 报喜不报忧）
     def set_aux_enabled(chat_id, enabled:, thread_id: nil) # rubocop:disable Lint/UnusedMethodArgument
+      chat = self.class.normalize_chat_id(chat_id)
+      raise InvalidArgument, "chat_id 不合法（nil/0/超 int64）" if chat.nil?
+
       flag = truthy_flag?(enabled) ? 1 : 0
       @conn.execute(
         "INSERT INTO chat_settings (chat_id, thread_id, aux_enabled, updated_at) " \
         "VALUES (?, ?, ?, datetime('now')) " \
         "ON CONFLICT(chat_id, thread_id) DO UPDATE SET " \
         "aux_enabled = excluded.aux_enabled, updated_at = excluded.updated_at",
-        [chat_id.to_i, GROUP_THREAD_ID, flag]
+        [chat, GROUP_THREAD_ID, flag]
       )
-      aux_enabled(chat_id)
+      aux_enabled(chat)
     end
 
     private

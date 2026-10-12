@@ -376,4 +376,15 @@ class TestTransientRetry < Minitest::Test
     assert_equal 8.0, policy.backoff(3, cap: 30)
     assert_equal 30, policy.backoff(9, cap: 30), "超过上限后恒为 cap"
   end
+
+  # --- ⑥ HTTP 读超时 vs 长轮询窗口（2026-10-13 审核修复） ---------------------
+
+  def test_http_read_timeout_exceeds_the_long_poll_window
+    # 20s 长轮询窗口 = 20s HTTP 读超时的边界竞争：生产日志实测 ~19 次/小时的
+    # Faraday::TimeoutError（空闲轮询偶发客户端先到期，每次 2~8s 退避停摆）。
+    # 修复 = telegram_api.rb 顶部 configure 把读超时加到 30s——此测试钉住
+    # 「读超时严格大于 gem Client 默认长轮询 timeout(20)」这条不变式。
+    assert_operator Telegram::Bot.configuration.connection_timeout, :>, 20,
+                    "connection_timeout 必须严格大于长轮询窗口（gem 默认 20s），否则边界竞争"
+  end
 end

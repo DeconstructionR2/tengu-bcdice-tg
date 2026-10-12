@@ -73,6 +73,16 @@ class TestBankHandler < Minitest::Test
     assert_includes out, "/bank reset"
   end
 
+  def test_deposit_beyond_int64_balance_reports_dedicated_line
+    # 2026-10-13 审核：单笔存 INT64_MAX 后余额顶格，再存 1 → db 层
+    # SaveResult.error(AmountOutOfRange) → 专用文案（此前误报「输入有误」误导排障）。
+    call("deposit #{9_223_372_036_854_775_807}")
+    out = call("deposit 1")
+
+    assert_includes out, "超出可记录上限", "累计越界应给真实原因文案"
+    assert_equal 9_223_372_036_854_775_807, balance.sum_money, "越界那笔不得落库"
+  end
+
   def test_help_subcommand_is_the_same_usage
     assert_equal call(""), call("help")
   end

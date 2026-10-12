@@ -41,6 +41,21 @@ require "telegram/bot"
 require "faraday/multipart" # send_document 的 FilePart（gem 也依赖它，显式声明）
 require_relative "config"
 
+# ============================================================================
+# 全局配置：HTTP 读超时必须严格大于长轮询窗口（2026-10-13 审核轮修复）
+#
+# gem 的 Client 默认把长轮询窗口（getUpdates 的 timeout）设为 20s，而
+# Configuration#connection_timeout 默认也是 20s——两个 20s 完全相等时，
+# 空闲轮询在「服务端 hold 满 20s 返回」与「客户端 20s 读超时」之间边界竞争，
+# 客户端偶发先到期：生产日志实测约 19 次/小时的 Faraday::TimeoutError，
+# 每次触发 2~8s 的轮询退避停摆（消息延迟）与一条 warn。
+# 读超时放宽到 30s 后，服务端总是先返回，竞争消除。
+# 钉测：test_transient_retry_test.rb#test_http_read_timeout_exceeds_the_long_poll_window
+# ============================================================================
+Telegram::Bot.configure do |config|
+  config.connection_timeout = 30
+end
+
 module TelegramBot
   # --------------------------------------------------------------------------
   # 切段工具（4096 字符上限，§0.2.4 / §7）
@@ -347,7 +362,15 @@ module TelegramBot
         # gem 已在 POST 之后才做响应类型映射（api.rb:28-32），重发会造成重复消息。
         raise unless gem_endpoint_missing?(e)
 
-        raw_api_call("sendMessage", params)
+        # 统一「发送入口只抛 SendError」契约（2026-10-13 审核：raw 失败此前
+        # 裸抛 RawApiError，破坏本文件 send_document 段的契约声明；与
+        # send_document 的降级实现对齐）。生产不可达（gem 白名单含
+        # sendMessage），属沉睡路径的契约一致性修复；消息只带类名。
+        begin
+          raw_api_call("sendMessage", params)
+        rescue RawApiError => raw_err
+          raise SendError, "sendMessage 降级失败（#{raw_err.class}）"
+        end
       rescue Telegram::Bot::Exceptions::ResponseError => e
         # 429 重投一次（2026-10-12 评审实证：发送失败此前只在 router 层 warn
         # 一行、返回 []，用户看到「bot 掷了骰却没回」）。**只重投 429**：被限流
@@ -429,7 +452,12 @@ module TelegramBot
       rescue NoMethodError => e
         raise unless gem_endpoint_missing?(e)
 
-        raw_api_call("answerCallbackQuery", params)
+        # 同 send_one 的降级契约（2026-10-13 审核）：raw 失败转 SendError
+        begin
+          raw_api_call("answerCallbackQuery", params)
+        rescue RawApiError => raw_err
+          raise SendError, "answerCallbackQuery 降级失败（#{raw_err.class}）"
+        end
       rescue Telegram::Bot::Exceptions::ResponseError => e
         raise SendError, format_send_error(e, params)
       end

@@ -1069,13 +1069,23 @@ module TenguDB
       text.empty? ? nil : text
     end
 
-    # 出目键：整数 3 与字符串 "3" 等价（天狗 `String(array[2])`）
+    # 出目键：整数 3 与字符串 "3" 等价（天狗 `String(array[2])`）。
+    # 前导零归一（2026-10-13 审核）：纯数字键统一为规范整数写法
+    # （"007"→"7"、"000"→"0"）——此前键原样入库，而发布校验/钳制按规范
+    # 整数比较，写进去的数据永远打不到（天狗 quirk 同病，本实现修复登记）。
     def normalize_data_index(index)
       return nil if index.nil?
       return index.to_s if index.is_a?(Integer)
 
       text = index.to_s
-      text.empty? ? nil : text
+      return nil if text.empty?
+
+      if text.match?(/\A\d+\z/) && text.length > 1
+        stripped = text.sub(/\A0+/, "")
+        return stripped.empty? ? "0" : stripped
+      end
+
+      text
     end
 
     # 权限数组：全转整数、丢掉空的与非数字的；全被丢掉时返回 nil
@@ -1146,6 +1156,11 @@ module TenguDB
 
     # spec 解析：不是 Hash 就退化成 {"dice"=>{}, "data"=>{}}
     #（空表比炸掉整张表有用——handler 仍能列出「这张表没有骰型」）
+    #
+    # ⚠️ spec 只允许 dice/data 两个顶层键——本解析丢弃其余键，而 write_columns
+    # 以 spec_draft 整体覆写 spec 列，故带外写入的第三个键会在任意 edit 后
+    # 永久消失（2026-10-13 审核登记；当前无任何写入者会产生第三个键，
+    # 属刻意收窄：改此口径需同时改 spec_draft/write_columns）。
     def parse_object(raw)
       text = raw.to_s
       return { SPEC_DICE => {}, SPEC_DATA => {} } if text.empty?

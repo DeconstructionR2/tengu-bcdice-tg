@@ -399,4 +399,20 @@ class TestSettingsAuxEnabled < Minitest::Test
     assert @settings.aux_enabled(CHAT_ID), "事务回滚后开关不该残留"
     assert_empty @settings.entries_for_chat(CHAT_ID)
   end
+
+  # --- chat_id 守卫（2026-10-13 审核：第五张含 chat_id 的表纳入四文件口径）----
+
+  def test_writes_reject_invalid_chat_id
+    [nil, 0, "", 9_223_372_036_854_775_808].each do |bad|
+      assert_raises(TenguDB::Settings::InvalidArgument) do
+        @settings.set_game_system(bad, game_system: "NinjaSlayerEx")
+      end
+      assert_raises(TenguDB::Settings::InvalidArgument) do
+        @settings.delete(bad)
+      end
+      assert_raises(TenguDB::Settings::InvalidArgument) do
+        @settings.set_aux_enabled(bad, enabled: false)
+      end
+    end
+  end
 end

@@ -572,7 +572,11 @@ module TelegramBot
         return format(NOT_ADMIN_FULL, name) unless write_allowed?(table, context, :permitted)
 
         dice_name = dice_name.downcase
-        existed = table.dice.key?(dice_name)
+        # 删不存在的名字 = 纯 no-op：直接早退，**不**触碰范围钳（2026-10-13
+        # 审核：此前沿母本顺序「先算关钳、后判存在」——删一个不存在的快捷名
+        # 也会把钳制关掉，而回执却说「未改动」，副作用与文案矛盾。母本此处
+        # 同样会静默关钳，属刻意修正的分支，登记为与母本差异④）。
+        return "表「#{name}」本来就没有快捷名「#{dice_name}」（未改动）。" unless table.dice.key?(dice_name)
 
         # 母本 deleteDice.js:17-26：其余骰型都没有 +x 且钳制开着 → 关钳
         # （先算、后删——排除被删的那个快捷名）
@@ -586,7 +590,6 @@ module TelegramBot
         )
         return STORAGE_ERROR if result.error?
         return not_found(name, scope) if result.not_found?
-        return "表「#{name}」本来就没有快捷名「#{dice_name}」（未改动）。" unless existed
 
         "表「#{name}」的骰型「#{dice_name}」已删除。"
       end
@@ -617,6 +620,9 @@ module TelegramBot
         return BAD_TABLE_NAME unless valid_table_name?(name)
         # 母本 updateData.js:44：出目必须是半角数字（放行字符串数字键语义由 db 层管）
         return BAD_INDEX unless DIGITS_PATTERN.match?(index)
+        # 前导零归一（"007"→"7"，2026-10-13 审核：键与校验/钳制按规范整数比较
+        # 不同源时数据永远打不到；db 层 normalize_data_index 同款兜底）
+        index = index.to_i.to_s
 
         flag = nil
         text = tail
@@ -657,6 +663,7 @@ module TelegramBot
         (name, index), flag = parsed
         return BAD_TABLE_NAME unless valid_table_name?(name)
         return BAD_INDEX unless DIGITS_PATTERN.match?(index)
+        index = index.to_i.to_s # 前导零归一（同 data set，2026-10-13 审核）
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -1112,8 +1119,16 @@ module TelegramBot
       #      这类骰式的出目范围是 89.99 亿档，`(min..max)` 实枚举会挂死进程。
       #      真实跑团表档位≪上限；超限直接拒发并明示。
       PUBLISH_RANGE_CAP = 10_000
+      # 缺失清单回执上限（2026-10-13 审核：防大档位表的回执膨胀——
+      # 详见 data_verification 内注释）
+      PUBLISH_MISSING_PREVIEW_MAX = 20
 
       def data_verification(table)
+        # 底线（2026-10-13 审核补）：isUse 与 +x 两条跳过路径都不得发布
+        # 「没有任何数据」的空壳表——range 命令（本项目新增入口）让 isUse
+        # 首次可由命令层打开，否则任意成员可把空表直送全局公共空间。
+        return "表还没有登记任何数据，无法发布（先 /ct data set，或关掉范围钳）。" if table.data.empty?
+
         return nil if table.datarange.is_use
         return nil if addition_dice?(table.dice)
         return "表没有骰型，无法发布。" if table.dice.empty?
@@ -1131,6 +1146,14 @@ module TelegramBot
 
         missing = (min..max).reject { |i| table.data.key?(i.to_s) }
         unless missing.empty?
+          # 回执体积上限（2026-10-13 审核：1d10000 这类大档位表可以让
+          # missing.join 膨胀到 ~4.9 万字符 → 12 段消息 + 单线程阻塞 ~12s；
+          # 超长只列前若干档 + 总数，信息不丢、体积有界）。
+          if missing.size > PUBLISH_MISSING_PREVIEW_MAX
+            return "出目 #{missing.first(PUBLISH_MISSING_PREVIEW_MAX).join(',')} 等" \
+                   "（共 #{missing.size} 档）没有登记数据，请先用 /ct data set 补齐。"
+          end
+
           return "出目 #{missing.join(',')} 没有登记数据，请先用 /ct data set 补齐。"
         end
 
@@ -1202,8 +1225,16 @@ module TelegramBot
 
         text = raw.to_s
         return nil unless /\A[+-]?\d+(?:\.\d+)?\z/.match?(text)
+        # 位数守卫（2026-10-13 审核）：>18 位数字已超 int64 量级，to_f 会溢出成
+        # Infinity、Infinity#floor 抛 FloatDomainError——被外层兜底成「存储层
+        # 出错」误导排障。按「不可解析」回落（同非数字口径=忽略補正），
+        # 真实跑团補正远远到不了 18 位。
+        return nil if text.count("0-9") > 18
 
-        text.to_f.floor
+        value = text.to_f
+        return nil unless value.finite?
+
+        value.floor
       end
 
       # 剥掉残留的 +x（理论上已被 substitute_addition 处理；防御手工数据）

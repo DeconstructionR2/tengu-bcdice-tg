@@ -183,8 +183,8 @@ module BCDice
       HELP_MESSAGE = begin
         extension_help = <<~TEXT
         --- 天狗ダイス版 追加コマンド ---
-        本システム（ニンジャスレイヤーTRPG 1版 拡張）は、天狗ダイス忍杀の独自表を
-        移植しているため、親类的コマンドに加えて以下のコマンドが使用できます。
+        本システム（ニンジャスレイヤーTRPG 1版 拡張）は、天狗ダイス忍殺の独自表を
+        移植しているため、親クラスのコマンドに加えて以下のコマンドが使用できます。
 
         --- 天狗独自表 9 種（T1.7）---
         記法（全表共通）：
@@ -444,8 +444,12 @@ module BCDice
 
       # 父类实现的入口覆写（T1.1 / 计划 §15.5 V4 同形写法）。
       #
-      # 先匹配本类新命令；未命中一律交给 `super`——父类实现内建
+      # 先匹配本类新命令；未命中一律交给 `super`——父类实现内建方法级
       # rescue→nil（语法错误即不响应），**不要复制父类方法体**。
+      #
+      # ⚠️ 但父类的方法级 rescue 只包住**父类自己的方法体**：本覆写里
+      # proc_ex_command（本类新命令解析）位于父类 rescue 范围之外，异常
+      # 会直达调用方。故本方法自带同口径兜底（2026-10-13 审核）。
       #
       # @param command [String]
       # @return [Result, String, nil]
@@ -454,6 +458,9 @@ module BCDice
         return result unless result.nil?
 
         return super
+      rescue StandardError => e
+        debug(e.class.to_s)
+        nil
       end
 
       private

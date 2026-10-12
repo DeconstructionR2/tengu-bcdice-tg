@@ -165,6 +165,12 @@ module TenguDB
 
     # 受影响行数（UPDATE/DELETE）。**不能**用 execute 的返回值——它返回
     # 结果集（DDL/DELETE 都是空数组），不是 change count（实测 sqlite3 2.9）。
+    #
+    # ⚠️ 与 execute 是**两次独立加锁**（各自 synchronize），「先 execute 再读
+    # changes」不构成原子对——调用方（settings/secrets/custom_tables）依赖的
+    # 隐含前提是**单线程串行**（当前实现如此；Monitor 只是防未来）。若将来
+    # 引入第二个线程共享连接，此处会读到被夹入语句覆盖的 changes 值
+    # （2026-10-13 审核登记；届时应改为同锁内返回 [result, changes] 的合体助手）。
     def changes
       @monitor.synchronize { @db.changes }
     end

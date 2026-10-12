@@ -300,12 +300,22 @@ module TelegramBot
     end
 
     def remember_admin(chat_id, user_id)
-      @admin_cache[[chat_id, user_id]] = now + @ttl
+      expires_at = now + @ttl
+      # 时钟故障期（now=+∞）写入的条目会是 ∞，时钟恢复后 ∞ > now(recovered)
+      # 恒真 = 永不过期（撤职延迟无限）——故障窗口不写缓存，让它每次真查
+      # （fail-closed 方向；2026-10-13 审核补齐「恢复后残留」窗口）。
+      @admin_cache[[chat_id, user_id]] = expires_at unless expires_at.infinite?
       true
     end
 
     def now
-      @clock.call.to_f
+      value = @clock.call
+      # 非数值与抛异常同待遇（2026-10-13 审核：nil.to_f=0.0 会让
+      # expires_at > 0 恒真 = 缓存恒命中，与旧「返回 0」的 fail-open
+      # 方向相同——防注入时钟/未来实现给出怪值）。
+      return Float::INFINITY unless value.is_a?(Numeric)
+
+      value.to_f
     rescue StandardError
       # 时钟坏了不能让权限判定崩成 false（那等于全体失去管理员能力）：
       # 退化到「不用缓存」——返回 +∞（任何 expires_at > ∞ 均为 false = 恒过期，

@@ -25,14 +25,6 @@ KEEP=7
 
 ts() { date '+%F %T'; }
 
-# ---------- 防并发双跑（kimi T4.2 评审提案 #1）：两个进程并发会互删当日备份
-# （rm 同名 + 双写），实测可致当日零备份且无人察觉。flock 自互斥 ----------
-exec 9>"${TENGU_BACKUP_LOCK:-/opt/<project>/.backup.lock}"
-if ! flock -n 9; then
-  echo "tengu-backup: ERROR 另一实例正在跑，本次退出" >&2
-  exit 1
-fi
-
 # ---------- 路径含单引号 = .backup 点命令解析会炸（kimi T4.2 评审提案 #4），
 # 提前明确拒绝（失败安全）----------
 case "$DB$BACKUP_DIR" in
@@ -43,6 +35,22 @@ esac
 if [ ! -f "$DB" ]; then
   echo "$(ts) tengu-backup: 跳过——DB 不存在（$DB，未上线或尚未生成）"
   exit 0
+fi
+
+# ---------- 防并发双跑（kimi T4.2 评审提案 #1）：两个进程并发会互删当日备份
+# （rm 同名 + 双写），实测可致当日零备份且无人察觉。flock 自互斥 ----------
+# 2026-10-13 审核：锁段移到「DB 不存在 → exit 0」之后——未上线时锁文件父目录
+# （/opt/<project>）可能还不存在，exec 重定向失败会以 bash 原生报错退出、
+# 破坏「未上线打一行说明 exit 0」的契约（且未上线时根本不需要锁）；
+# flock 缺失时此前会被退出码 127 误判成「另一实例正在跑」，一并加预检。
+if ! command -v flock >/dev/null 2>&1; then
+  echo "tengu-backup: ERROR flock 不在 PATH（防并发互斥不可用）" >&2
+  exit 1
+fi
+exec 9>"${TENGU_BACKUP_LOCK:-/opt/<project>/.backup.lock}"
+if ! flock -n 9; then
+  echo "tengu-backup: ERROR 另一实例正在跑，本次退出" >&2
+  exit 1
 fi
 
 # ---------- 前置：sqlite3 可用 + 备份目录可写 ----------
@@ -74,15 +82,31 @@ if [ "$CHECK" != "ok" ]; then
   echo "tengu-backup: ERROR 备份完整性检查未过：$TARGET_TMP（integrity_check=$CHECK）" >&2
   exit 1
 fi
-mv -f "$TARGET_TMP" "$TARGET"
+# 原子顶替的失败必须显式报错（2026-10-13 审核：此后是全文**唯一**未判返回值
+# 的写操作——失败仍报 OK 并照常执行超龄清理，方向最坏；磁盘/权限故障宁红不断后）。
+if ! mv -f "$TARGET_TMP" "$TARGET"; then
+  rm -f "$TARGET_TMP"
+  echo "tengu-backup: ERROR 原子顶替失败（mv $TARGET_TMP -> $TARGET）" >&2
+  exit 1
+fi
 
 # ---------- 保留最近 KEEP 份（文件名字典序=时间序；严格形态防误删） ----------
-OLD=$(cd "$BACKUP_DIR" && ls -1 tengu-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].db 2>/dev/null | sort | head -n -"$KEEP")
+# 2026-10-13 审核：`head -n -N` 是 GNU 扩展且无 pipefail（失败时 OLD 静默为空、
+# 跳过清理仍报 OK）——改为「倒序 + tail -n +N」的等价 POSIX 写法，更稳。
+OLD=$(cd "$BACKUP_DIR" && ls -1 tengu-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].db 2>/dev/null | sort -r | tail -n +"$((KEEP + 1))")
 if [ -n "$OLD" ]; then
   while IFS= read -r f; do
     rm -f "$BACKUP_DIR/$f" && echo "$(ts) tengu-backup: 清理超龄备份 $f"
   done <<< "$OLD"
 fi
+
+# ---------- 中断残留的临时文件清理（2026-10-13 审核：.tmp-<pid> 不在保留期
+# 清理的严格形态 glob 内，被 kill -9 的旧实例会留下永久残骸；flock 保证
+# 当前无并发实例，超龄 60 分钟即视为残骸清掉） ----------
+find "$BACKUP_DIR" -maxdepth 1 -name 'tengu-*.db.tmp-*' -type f -mmin +60 -print0 2>/dev/null \
+  | while IFS= read -r -d '' f; do
+      rm -f "$f" && echo "$(ts) tengu-backup: 清理残留临时文件 $(basename "$f")"
+    done
 
 echo "$(ts) tengu-backup: OK $TARGET（$(du -h "$TARGET" | cut -f1)，保留最近 $KEEP 份）"
 exit 0

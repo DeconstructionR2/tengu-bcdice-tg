@@ -38,7 +38,9 @@ require "logger"
 # ── 天狗忠实保留（含「看起来像 bug 的部分」）──────────────────────────────
 #   - **无透支校验**：sum_money 可为负（schema 注释即如此）。
 #   - `m+0` / `m-0` → 天狗 `if (!array[1]) return error`（0 在 JS 里是 falsy）
-#     → 玩家看到输入错误。本文件 `amount.zero? → :error` 同款。
+#     → 玩家看到输入错误。零值的拦截在 **handler 层**（bot/handlers/bank.rb
+#     的 handle_money），本层只守 int64 界（见 save_record 内注释；
+#     2026-10-13 审核订正：旧文声称本文件拦 0，与代码/单测三方矛盾）。
 #   - **首次只存道具也会开账**：天狗 saveRecord 在「无数据」分支无条件建档，
 #     money=0 → money_record="0"。故「空账上第一次删道具」不会报「没有该道具」，
 #     而是开出一个空账（天狗行为，本文件同样保留，见 CHANGELOG 注记）。

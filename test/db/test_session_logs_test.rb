@@ -389,4 +389,27 @@ class TestSessionLogs < Minitest::Test
     append(moved, content: "升级后的发言")
     assert_equal [1, 2], @store.entries(log.id).map(&:seq)
   end
+
+  # --- 入参守卫（2026-10-13 审核：此前只有 chat_id 走 int64 守卫） ------------
+
+  def test_append_entry_rejects_invalid_log_id
+    assert_raises(ArgumentError) do
+      @store.append_entry(log_id: 0, sender_name: "T", content: "x")
+    end
+    assert_raises(ArgumentError) do
+      @store.append_entry(log_id: 9_223_372_036_854_775_808, sender_name: "T", content: "x")
+    end
+  end
+
+  def test_append_entry_normalizes_out_of_range_user_id_to_null
+    log = s_start.log
+    out_of_range = 9_223_372_036_854_775_808
+
+    @store.append_entry(log_id: log.id, sender_name: "T", user_id: out_of_range, content: "x")
+
+    stored = @conn.get_first_value(
+      "SELECT user_id FROM log_entries WHERE log_id = ? AND seq = 1", [log.id]
+    )
+    assert_nil stored, "超 int64 的 user_id 归一为 NULL（不得静默存成 REAL）"
+  end
 end

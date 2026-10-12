@@ -81,7 +81,7 @@ module BCDice
         extension_help = <<~TEXT
 
         --- 天狗ダイス版 追加コマンド ---
-        本システム（ニンジャスレイヤーTRPG 2版 拡張）は、天狗ダイス忍杀の独自表を
+        本システム（ニンジャスレイヤーTRPG 2版 拡張）は、天狗ダイス忍殺の独自表を
         移植しているため、親クラスのコマンドに加えて以下のコマンドが使用できます。
 
         --- 天狗独自表：NSRS発狂 ---
@@ -223,7 +223,7 @@ module BCDice
         そのまま残しています。コッポ判定には `[=4]` を使ってください。
         ※ 倍率に数字以外（`[>=5*x]`）を書くと**応答しません**
         （天狗では倍率 1 にフォールバックしますが、書き間違いに気づけないため
-        本拡張では整条を応答しない方針です）。
+        本拡張では一切応答しない方針です）。
         ※ 倍率の上限は 100 です（`[>=5*101]` は応答しません）。
 
         ※ 親クラスの追加判定（`[=6]` / `[S5]` / `[C]` / `[>=665+]` など）は
@@ -621,7 +621,14 @@ module BCDice
       # （judge.APPENDIX_EX.bairitsu_max，生成期写死 100），
       # 代码只读不写，改上界请改 json_to_i18n.rb 的生成值。
       def self.appendix_bairitsu_max
-        I18n.t("NinjaSlayer2Ex.judge.APPENDIX_EX.bairitsu_max", locale: :ja_jp)
+        value = I18n.t("NinjaSlayer2Ex.judge.APPENDIX_EX.bairitsu_max", locale: :ja_jp)
+        Integer(value)
+      rescue StandardError
+        # 键缺失/不可解析 = 部署事故（i18n 守卫测试本应拦下）——不崩，
+        # 回落生成期常量 100（json_to_i18n.rb 写死值，见上注）。
+        # 此前走裸 I18n.t：键缺失返回 "translation missing" 字符串，与
+        # Float 比较抛 ArgumentError（2026-10-13 审核）。
+        100
       end
 
       # 倍率的「合法数字串」形态。天狗是 `Number(x)` + `isNaN` 兜底（实测 §2.2）：
@@ -743,8 +750,14 @@ module BCDice
 
       # 父类实现的入口覆写（T1.1 / 计划 §15.5 V4 同形写法）。
       #
-      # 先匹配本类新命令；未命中一律交给 `super`——父类实现内建
+      # 先匹配本类新命令；未命中一律交给 `super`——父类实现内建方法级
       # rescue→nil（语法错误即不响应），**不要复制父类方法体**。
+      #
+      # ⚠️ 但父类的方法级 rescue 只包住**父类自己的方法体**：本覆写里
+      # proc_ex_command（本类新命令解析）位于父类 rescue 范围之外，异常
+      # 会直达调用方。故本方法自带同口径兜底（2026-10-13 审核；
+      # proc_ex_command 自身以「不抛异常」为目标，此处是第二道防线——
+      # 如 appendix_bairitsu_max 走 I18n.t 且键缺失的异常态）。
       #
       # @param command [String]
       # @return [Result, String, nil]
@@ -753,6 +766,11 @@ module BCDice
         return result unless result.nil?
 
         return super
+      rescue StandardError => e
+        # 与父类同口径：解析失败 → 不响应（nil）。只记类名（日志纪律：
+        # 不打用户输入/异常消息）。
+        debug(e.class.to_s)
+        nil
       end
 
       private

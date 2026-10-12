@@ -55,7 +55,23 @@ class TestConnection < Minitest::Test
     indexes = @conn.execute_query(
       "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='log_entries'"
     ).flatten
-    assert_includes indexes, "idx_log_entries_log"
+    # 2026-10-13 审核：升级为 UNIQUE（idx_log_entries_log_uniq——旧非唯一名被
+    # DROP 迁移；UNIQUE 让 (log_id, seq) 并列在 DB 层直接拒绝）
+    assert_includes indexes, "idx_log_entries_log_uniq"
+    refute_includes indexes, "idx_log_entries_log"
+  end
+
+  def test_log_entries_seq_is_unique_per_log
+    @conn.execute("INSERT INTO session_logs (chat_id, thread_id, name, status) " \
+                  "VALUES (1, 0, 'T', 'recording')")
+    log_id = @conn.get_first_value("SELECT id FROM session_logs")
+    @conn.execute("INSERT INTO log_entries (log_id, seq, sender_name, content) " \
+                  "VALUES (?, 1, 'a', 'x')", [log_id])
+
+    assert_raises(SQLite3::ConstraintException) do
+      @conn.execute("INSERT INTO log_entries (log_id, seq, sender_name, content) " \
+                    "VALUES (?, 1, 'b', 'y')", [log_id])
+    end
   end
 
   def test_reopening_same_path_is_idempotent

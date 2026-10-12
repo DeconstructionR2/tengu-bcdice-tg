@@ -26,6 +26,7 @@ class TestHelpHandler < Minitest::Test
     end
     assert_includes text, "N4,3", "帮助应含裸打示例"
     assert_includes text, "[S]", "帮助应注明 S 判定不可混排的已知差异"
+    assert_includes text, "15 秒", "2026-10-13：/secret 提示应含非管理员 15 秒窗口口径"
   end
 
   # PendingHandler 自 T3.5 起**无生产使用者**（菜单十条命令全有真 handler），

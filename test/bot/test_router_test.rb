@@ -757,6 +757,21 @@ class TestRouter < Minitest::Test
     end
   end
 
+  def test_gate_skips_extended_mode_patterns
+    # 2026-10-13 审核：收割只取 .source 重编译——带 /x 的锚定正则重编译后
+    # 空白语义不同会静默失配，故必须显式跳过（当前 4 系统未用 /x）。
+    klass = Class.new do
+      const_set(:RE_EXTENDED, /\A S O U L \z/x)
+      const_set(:RE_PLAIN, /\ASOUL\z/)
+    end
+
+    sources = TelegramBot::AuxMatcher.command_pattern_sources([klass])
+    joined = sources.join("|")
+
+    assert_includes joined, "SOUL", "普通锚定正则应被收割"
+    refute_includes joined, "S O U L", "带 /x 的正则必须跳过（source 重编译会丢 flags）"
+  end
+
   def test_gate_skips_loose_diceroll_patterns
     sources = TelegramBot::AuxMatcher.command_pattern_sources(TelegramBot::Router.default_systems)
     joined = sources.join("|")

@@ -364,4 +364,39 @@ class TestRawApiCall < Minitest::Test
     assert_equal "q9", http.last_body[:callback_query_id]
     assert_equal true, http.last_body[:show_alert], "alert 语义须转成 wire 参数 show_alert"
   end
+
+  # --- raw 降级失败 → SendError（2026-10-13 审核修复） ------------------------
+
+  def test_send_one_raw_fallback_failure_becomes_send_error
+    # raw 降级失败此前裸抛 RawApiError，破坏「发送入口只抛 SendError」契约
+    # （与 send_document 的降级实现对齐修复）。
+    gem_like = BotTestHelper::FakeGemLikeApi.new(missing: ["sendMessage"])
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new(response: { status: 502, body: "Bad Gateway" })
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                       api_client: BotTestHelper::FakeClient.new(gem_like),
+                                       sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                       clock: clock,
+                                       http_executor: http)
+
+    err = assert_raises(TelegramBot::SendError) { api.send_text(123, "hi") }
+    assert_match(/降级失败/, err.message)
+    refute_match(/#{Regexp.escape(FAKE_TOKEN)}/, err.message, "不得泄漏 token")
+  end
+
+  def test_answer_callback_query_raw_fallback_failure_becomes_send_error
+    gem_like = BotTestHelper::FakeGemLikeApi.new
+    clock = BotTestHelper::FakeClock.new
+    http = BotTestHelper::FakeHttpExecutor.new(response: { status: 502, body: "Bad Gateway" })
+    api = TelegramBot::TelegramApi.new(token: FAKE_TOKEN,
+                                       api_client: BotTestHelper::FakeClient.new(gem_like),
+                                       sleeper: BotTestHelper::FakeSleeper.new(clock),
+                                       clock: clock,
+                                       http_executor: http)
+
+    err = assert_raises(TelegramBot::SendError) do
+      api.answer_callback_query(callback_query_id: "q1", text: "x")
+    end
+    assert_match(/降级失败/, err.message)
+  end
 end

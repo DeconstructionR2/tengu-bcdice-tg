@@ -377,22 +377,32 @@ module TenguDB
     # @param msg_kind [String] "text" / "photo" / "sticker" / …（非文本占位）
     # @return [LogEntry, nil]
     def append_entry(log_id:, sender_name:, user_id: nil, is_bot: 0, msg_kind: "text", content:)
+      # 入参守卫（2026-10-13 审核：此前只有 chat_id 走 int64 守卫，本方法
+      # 裸用 to_i——超界值会被 SQLite 静默存成 REAL）。log_id 必填，非法
+      # 属调用方 bug（同 secrets.create 的 ArgumentError 口径）；user_id
+      # 可空，超界归一为 NULL（bot 消息同席位）。
+      log = log_id.to_i
+      raise ArgumentError, "log_id 不合法" if log.zero? || !log.between?(INT64_MIN, INT64_MAX)
+
+      uid = user_id.nil? ? nil : user_id.to_i
+      uid = nil if uid && !uid.between?(INT64_MIN, INT64_MAX)
+
       entry = nil
       conn.transaction(:immediate) do
         seq = conn.get_first_value(
           "SELECT COALESCE(MAX(seq), 0) + 1 FROM log_entries WHERE log_id = ?",
-          [log_id.to_i]
+          [log]
         ).to_i
         conn.execute(
           "INSERT INTO log_entries (log_id, seq, sender_name, user_id, is_bot, " \
           "msg_kind, content, created_at) " \
           "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-          [log_id.to_i, seq, sender_name.to_s, user_id.nil? ? nil : user_id.to_i,
+          [log, seq, sender_name.to_s, uid,
            truthy_flag?(is_bot) ? 1 : 0, msg_kind.to_s, content.to_s]
         )
         row = conn.get_first_hash(
           "SELECT #{ENTRY_COLUMNS} FROM log_entries WHERE log_id = ? AND seq = ?",
-          [log_id.to_i, seq]
+          [log, seq]
         )
         entry = row.nil? ? nil : to_entry(row)
       end

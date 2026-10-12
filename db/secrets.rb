@@ -87,7 +87,11 @@ module TenguDB
       return nil if value.nil?
       return nil if value.is_a?(String) && value.strip.empty?
 
-      int = value.to_i
+      # 严格解析（对齐 custom_tables.normalize_user 的 T3.3 修复）：宽容 to_i
+      # 会把 "42abc" 折成 42——比较侧 fail-open 方向反了，必须与写入侧同款
+      # 严格（2026-10-13 审核：本处是当时漏改的孪生位置）。
+      int = value.is_a?(Integer) ? value : Integer(value.to_s, exception: false)
+      return nil if int.nil?
       return nil if int > INT64_MAX
 
       int.positive? ? int : nil

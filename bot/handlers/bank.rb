@@ -273,6 +273,9 @@ module TelegramBot
       # 天狗 saveRecord 的两态回显（recordMoney / recordItem 的头部判断）
       def render_save_result(result)
         return "账上没有这件道具的记录。" if result.item_missing?
+        # 累计越界（余额超 int64）此前与「输入有误」共用兜底文案（2026-10-13
+        # 审核：给用户看到真实原因，别把人引向「是不是我打错了」）。
+        return "这笔钱会让余额超出可记录上限，已拒绝。" if result.error == TenguDB::AmountOutOfRange
 
         BAD_INPUT
       end

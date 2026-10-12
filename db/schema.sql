@@ -107,7 +107,12 @@ CREATE TABLE IF NOT EXISTS log_entries (
   content      TEXT NOT NULL,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_log_entries_log ON log_entries(log_id, seq);
+-- 升级为 UNIQUE（2026-10-13 审核：seq 并列会让导出排序非全序；单连接 +
+-- COALESCE(MAX,0)+1 在事务内保证不产生重复，UNIQUE 是 DB 层第二道保险）。
+-- 旧名先 DROP 再以新名建 UNIQUE——两条都幂等，重连不会反复重建
+-- （旧库自动迁移；新库直接建新名）。
+DROP INDEX IF EXISTS idx_log_entries_log;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_log_entries_log_uniq ON log_entries(log_id, seq);
 -- 录制热路径：每条入站消息一次 recording_for 查询（kimi T3.5 评审提案 #6）
 CREATE INDEX IF NOT EXISTS idx_session_logs_scope ON session_logs(chat_id, thread_id, status);
 

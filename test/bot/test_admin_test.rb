@@ -243,7 +243,45 @@ class TestAdmin < Minitest::Test
 
     assert_equal 3, gem.calls.size,
                  "时钟故障必须退化为「不用缓存」——每次都真查（恒过期）"
-    # 缓存条目可能存在（写入值 = ∞），但永不命中（∞ > ∞ 为 false）
+    # 故障期写入被拒（remember_admin 对 ∞ 到期值不写缓存，2026-10-13 审核）——
+    # 故缓存表在故障期保持为空
+  end
+
+  def test_recovered_clock_does_not_serve_infinite_cache_entries
+    # 2026-10-13 审核：故障期写入的 ∞ 条目在时钟恢复后 ∞ > now 恒真 =
+    # 永不过期（撤职延迟无限）——修复：故障窗口不写缓存，恢复后必须真查。
+    mode = { broken: true }
+    clock = lambda {
+      raise "clock boom" if mode[:broken]
+
+      100.0
+    }
+    gem = FakeGemApi.new(status: "administrator")
+    fake = FakeApi.new(gem)
+    admin = TelegramBot::Admin.new(api: fake, clock: clock,
+                                   ttl: 300.0, logger: Logger.new(IO::NULL))
+
+    assert admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup")
+    assert_equal 1, gem.calls.size
+
+    mode[:broken] = false # 时钟恢复
+    assert admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup")
+    assert_equal 2, gem.calls.size, "故障期不得写入缓存——恢复后首次必须真查"
+
+    assert admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup")
+    assert_equal 2, gem.calls.size, "恢复后正常写缓存——TTL 内应命中"
+  end
+
+  def test_non_numeric_clock_is_treated_as_broken_not_fail_open
+    # 2026-10-13 审核：nil.to_f=0.0 会让 expires_at > 0 恒真 = 缓存恒命中
+    # （fail-open 方向）——非数值必须与抛异常同待遇（恒过期、不用缓存）。
+    gem = FakeGemApi.new(status: "administrator")
+    fake = FakeApi.new(gem)
+    admin = TelegramBot::Admin.new(api: fake, clock: -> { nil },
+                                   ttl: 300.0, logger: Logger.new(IO::NULL))
+
+    3.times { assert admin.admin?(CHAT_ID, USER_ID, chat_type: "supergroup") }
+    assert_equal 3, gem.calls.size, "非数值时钟同样退化为不用缓存（每次真查）"
   end
 
   def test_false_is_not_cached

@@ -187,6 +187,11 @@ module TelegramBot
             next
           end
           next unless value.is_a?(Regexp)
+          # 只取 .source 重编译会丢 flags——尤其 /x（EXTENDED）：重编译后空白的
+          # 语义不同、会静默失配（本文件注释早记过 /x 的坑）。当前 4 个系统
+          # 均未用 /x；加守卫让将来引入时显式跳过而不是静默错误
+          # （2026-10-13 审核；EXTENDING 轴②登记升级复核点）。
+          next if (value.options & Regexp::EXTENDED).positive?
           next unless anchored?(value.source)
           # 排除「脱掉引擎前缀闸门后会误放行」的松散正则/子片段
           # （名单与理由见 EXCLUDED_PATTERN_NAMES 注释；名单必须 Symbol）。

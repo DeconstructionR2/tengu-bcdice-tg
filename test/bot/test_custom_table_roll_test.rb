@@ -180,6 +180,18 @@ class TestCustomTableRoll < Minitest::Test
     assert_includes out, "1d6 ＞ 3", "骰式无 +x → 補正值不参与（同天狗）"
   end
 
+  def test_adjustment_of_absurd_digit_length_is_ignored_not_storage_error
+    # 2026-10-13 审核：309 位数字補正 → to_f 溢出成 Infinity、Infinity#floor
+    # 抛 FloatDomainError → 被 handler 兜底成「存储层出错」误导排障。
+    # 修复：位数守卫（>18 位按不可解析回落=忽略補正，同非数字口径）。
+    seed_six
+    @ct.update_dice(chat_id: CHAT_ID, name: "六表", dice_name: "b", dice_string: "1d6+x")
+
+    out = roll("六表 b #{"9" * 309}", rands: [[4, 6]])
+
+    assert_includes out, "1d6 ＞ 4", "巨大補正应回落为忽略（等同未给），不得崩成存储层错误"
+  end
+
   # --- datarange 钳制（NJDiscordReply.js:91-95）-----------------------------
 
   def test_roll_within_bounds_is_not_clamped

@@ -460,6 +460,20 @@ class TestCustomTableHandler < Minitest::Test
     refute table("钳表").datarange.is_use, "最后一个 +x 骰型删掉 → 关钳（deleteDice.js:21-26）"
   end
 
+  def test_dice_del_of_a_missing_name_does_not_touch_the_range
+    # 2026-10-13 审核：删不存在的快捷名此前会静默执行「关钳」（先算后删的
+    # 母本顺序），回执却说「未改动」——修复为直接早退、不碰范围钳。
+    seed_table("钳表")
+    ct_call("data set 钳表 1 一")
+    ct_call("dice set 钳表 b 1d6+x") # 开钳（1..1）
+    assert table("钳表").datarange.is_use
+
+    out = ct_call("dice del 钳表 zzz")
+
+    assert_includes out, "本来就没有快捷名"
+    assert table("钳表").datarange.is_use, "删不存在的名字不得关闭范围钳"
+  end
+
   def test_data_set_expands_the_range_when_it_is_on
     seed_table("钳表")
     ct_call("data set 钳表 1 一")
@@ -542,6 +556,17 @@ class TestCustomTableHandler < Minitest::Test
     assert_equal 1, table("数据表").data.size
   end
 
+  def test_data_set_normalizes_leading_zero_index
+    # 2026-10-13 审核："007" 曾原样入库而校验/钳制按规范整数比较 → 数据
+    # 永远打不到；修复为归一入库（回执与存储一致）。
+    seed_table("零表")
+    out = ct_call("data set 零表 007 值七")
+
+    assert_includes out, "出目 7 结果已录入", "回执应显示归一后的出目"
+    assert_equal "值七", table("零表").data["7"]
+    assert_nil table("零表").data["007"]
+  end
+
   def test_data_del_removes_only_that_entry
     seed_table("数据表")
     ct_call("data set 数据表 1 一")
@@ -599,6 +624,7 @@ class TestCustomTableHandler < Minitest::Test
 
   def test_range_flag_is_positional_and_works_with_off
     seed_table("本群钳")
+    ct_call("data set 本群钳 1 一") # 2026-10-13 空表底线：先补数据让 publish 合法（本用例只测 flag 位置语义）
     ct_call("range 本群钳 1 6")
     ct_call("publish 本群钳") # 已开钳 → 发布跳过数据校验
 
@@ -720,6 +746,7 @@ class TestCustomTableHandler < Minitest::Test
     # `(min..max).reject` 实枚举会挂死单线程 bot。上限 10_000 档，
     # 超限必须**快速**拒发（Timeout 守护断言它不再枚举）。
     seed_table("防爆表")
+    ct_call("data set 防爆表 1 一") # 2026-10-13 空表底线：先补数据把流程推进到被测分支
     ct_call("dice set 防爆表 a 9d999999999")
 
     out = nil
@@ -735,6 +762,7 @@ class TestCustomTableHandler < Minitest::Test
     # 三审实证：`2-3d6` 旧算出 {min:-1, max:-16}（min>max），报错文案自相矛盾。
     # 修正后减骰区间 = [2-18, 2-3] = -16~-1，缺失清单应按该口径报。
     seed_table("负骰表")
+    ct_call("data set 负骰表 1 一") # 2026-10-13 空表底线：先补数据把流程推进到被测分支
     ct_call("dice set 负骰表 a 2-3d6")
 
     out = ct_call("publish 负骰表")
@@ -746,6 +774,7 @@ class TestCustomTableHandler < Minitest::Test
 
   def test_publish_rejects_zero_sided_dice_as_unparseable
     seed_table("零面表")
+    ct_call("data set 零面表 1 一") # 2026-10-13 空表底线：先补数据把流程推进到被测分支
     ct_call("dice set 零面表 a 1d0")
 
     assert_includes ct_call("publish 零面表"), "表没有可解析的骰式",
@@ -756,6 +785,7 @@ class TestCustomTableHandler < Minitest::Test
     # DICE_EXPR_PATTERN 放行大写 D，dice_bounds 曾只认小写（"2D6" 被当常量 2）。
     # 修后大小写同口径：2D6 出目范围 2~12。
     seed_table("大写表")
+    ct_call("data set 大写表 1 一") # 2026-10-13 空表底线：先补数据把流程推进到被测分支
     ct_call("dice set 大写表 a 2D6")
 
     out = ct_call("publish 大写表")
@@ -816,6 +846,44 @@ class TestCustomTableHandler < Minitest::Test
 
   def test_publish_missing_table
     assert_includes ct_call("publish 不存在"), "找不到表"
+  end
+
+  def test_publish_missing_preview_is_bounded_for_large_ranges
+    # 2026-10-13 审核：missing.join 无界（1d10000 档位内、零数据 → ~4.9 万
+    # 字符 → 12 段消息 + 单线程阻塞 ~12s）——超长只列前 20 档 + 总数。
+    # （零数据表先被「空表底线」拦，故先补一条把流程推进到缺失清单分支。）
+    seed_table("大表")
+    ct_call("data set 大表 1 一")
+    ct_call("dice set 大表 a 1d10000")
+
+    out = ct_call("publish 大表")
+
+    assert_includes out, "共 9999 档", "超长缺失清单应折为「共 N 档」"
+    assert_operator out.length, :<, 1000, "回执体积必须有界（不再是 ~4.9 万字符）"
+    refute_nil table("大表"), "拒发不许动表"
+  end
+
+  def test_publish_rejects_an_empty_table_even_when_verification_would_be_skipped
+    # 2026-10-13 审核：isUse / +x 两条跳过校验路径都不得发布「零数据」空壳表
+    # （range 命令让 isUse 首次可由命令层打开）。
+    seed_table("空钳表")
+    ct_call("range 空钳表 1 6")
+    assert table("空钳表").datarange.is_use
+
+    out = ct_call("publish 空钳表")
+
+    assert_includes out, "还没有登记任何数据"
+    refute_nil table("空钳表"), "拒发不许动表"
+    assert_nil @ct.fetch(chat_id: 0, name: "空钳表", scope: :public)
+  end
+
+  def test_publish_rejects_empty_table_with_plus_x_skip_path
+    seed_table("空加表")
+    ct_call("dice set 空加表 b 1d6+x")
+
+    out = ct_call("publish 空加表")
+
+    assert_includes out, "还没有登记任何数据", "+x 跳过路径同样不得发布空壳表"
   end
 
   # --- delete ---------------------------------------------------------------

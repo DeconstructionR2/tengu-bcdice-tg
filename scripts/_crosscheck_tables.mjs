@@ -106,12 +106,19 @@ const norm1 = (s) =>
     .replace(/\s+/g, "");
 
 const norm2 = (s) => {
-  const t = norm1(s);
-  // 天狗摘要在条目开头，形如 `腹部の痛打：『…』`（『』可省略），其后再跟正文本体
-  // kimi P3：初版正则写死双全角冒号 `：：` 永不命中（死代码），已修为单 `：` 并放宽『』
-  const m = t.match(/^[^『「\n]{2,30}：(『[^』]*』)?/);
-  if (m) return t.slice(m[0].length);
-  return t;
+  // 天狗摘要在条目开头，形如 `腹部の痛打：『…』`（『』可省略），其后再跟正文本体。
+  // ⚠️ 顺序：摘要剥离必须发生在「剥全角冒号」**之前**——此前实现先走 norm1
+  // （冒号已剥）再匹配摘要，正则永不命中、L2 ≡ L1（2026-10-13 审核：kimi P3
+  // 修掉「双冒号」之后又踩了这条上游顺序坑，一并修正）。
+  const raw = fw2half(s)
+    .replace(/\*\*/g, "")
+    .replace(/　/g, " ")
+    .replace(/–/g, "-")
+    .replace(/\s+/g, "");
+  const m = raw.match(/^[^『「\n]{2,30}：(『[^』]*』)?/);
+  const stripped = m ? raw.slice(m[0].length) : raw;
+  // 剥完摘要再执行 L1 的收尾（剥 `：`），与 norm1 的最终口径一致
+  return stripped.replace(/：/g, "");
 };
 
 function cmp(label, a, b) {
