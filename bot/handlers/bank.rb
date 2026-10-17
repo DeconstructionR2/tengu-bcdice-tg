@@ -111,9 +111,13 @@ module TelegramBot
       end
 
       # @param bank [TenguDB::Bank, nil] nil = DB 层单连接
+      # @param session_log [#record_bot_output, nil] 跑团 log 录制挂钩
+      #   （2026-10-18：`/bank statement` 由 handler 自己发送，绕过了 router
+      #   的代发录制点，故显式注入同一对象补录；nil = 不录）
       # @param logger [#warn, nil] 只记结构性信息，绝不记用户正文（道具名是用户输入）
-      def initialize(bank: nil, logger: ::Logger.new($stderr))
+      def initialize(bank: nil, session_log: nil, logger: ::Logger.new($stderr))
         @bank = bank
+        @session_log = session_log
         @logger = logger
       end
 
@@ -148,7 +152,7 @@ module TelegramBot
         when "withdraw" then handle_money(chat_id, thread_id, rest, -1)
         when "item" then handle_item(chat_id, thread_id, rest)
         when "balance" then handle_balance(chat_id, thread_id)
-        when "statement" then handle_statement(chat_id, thread_id)
+        when "statement" then handle_statement(context, chat_id, thread_id)
         when "reset" then handle_reset(chat_id, thread_id)
         when "help" then USAGE
         else BAD_INPUT
@@ -228,29 +232,55 @@ module TelegramBot
 
       # ------------------------------------------------------------------
       # 结算（天狗 getRecordResult ← `result`/`end`）：出流水后**清零**
+      #
+      # 2026-10-18 审核：顺序改为「先发报表、成功后再清零」。旧顺序是
+      # db 层事务内 DELETE 先提交、报表交给 router 事后发送——发送失败
+      # （429/网络/被禁言）只 warn 一行，账已经清了而用户什么都没收到。
+      # 现在由 handler 直接发送（返回 nil 阻止 router 二次发送）；发送失败
+      # 时账目保持原样并给出可读回执。
       # ------------------------------------------------------------------
-      def handle_statement(chat_id, thread_id)
-        record, attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
-
-        unless attempted
-          return "本#{record_scope(thread_id)}内没有找到银行的记录。"
-        end
-
-        # 天狗：DELETE 失败时把**整条**输出换成错误文案，不是追加一行。
-        # 真 DB 故障时 db/bank.rb 走的是**抛异常**（router 兜底 + 结构化日志），
-        # 所以这里的 false 只在注入了会失败的 bank 时出现（测试可达）。保留
-        # 分支而不是让它恒真：一旦日后 DB 层改成「返回 false」表达故障，handler
-        # 已备好用户可见的失败文案，不会把「没清掉」静默说成「已重置」。
-        unless deleted
-          warn_line("[bank] 结算清零失败（chat_id=#{chat_id}）")
-          return "清零失败，账目未被重置。请稍后再试。"
-        end
+      def handle_statement(context, chat_id, thread_id)
+        record = bank.fetch(chat_id: chat_id, thread_id: thread_id)
+        return "本#{record_scope(thread_id)}内没有找到银行的记录。" if record.nil?
 
         text = +"结果…… #{self.class.balance_line(record)}"
         flow = record.money_flow_text
         text << "\n出入金记录：#{flow} = #{self.class.change893(record.sum_money)}" unless flow.nil?
-        text << "\n\n#{reset_notice(record_scope(thread_id))}"
-        text
+        # 清零发生在发送成功之后（见方法头）：文案不提前宣称「已重置」，
+        # 只说明这条命令的语义；真失败会另发一条「清零失败」。
+        text << "\n\n（结算：本条发出后清空本#{record_scope(thread_id)}的记录）"
+
+        api = context[:api]
+        if api.nil?
+          # 无发送通道（单测/裁剪接线）：保留「返回文本由调用方发送」的旧契约。
+          _rec, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+          return "报表已生成，但清零失败，账目未被重置。请稍后再试。" unless deleted
+
+          return text
+        end
+
+        begin
+          api.send_text(chat_id, text, thread_id: thread_id)
+        rescue StandardError => e
+          warn_line("[bank] 报表发送失败，未清零（chat_id=#{chat_id}）：#{e.class}")
+          return "报表发送失败（#{e.class}），账目未清零；请稍后重试。"
+        end
+
+        # 自己发送 = 绕过 router 的录制挂钩②，在此补录（录制失败不影响结算）
+        begin
+          @session_log&.record_bot_output(chat_id: chat_id, thread_id: thread_id, text: text)
+        rescue StandardError => e
+          warn_line("[bank] 报表录制失败（已忽略）：#{e.class}")
+        end
+
+        _record, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+
+        unless deleted
+          warn_line("[bank] 结算清零失败（chat_id=#{chat_id}）")
+          return "报表已发出，但清零失败，账目未被重置。请稍后再试。"
+        end
+
+        nil
       end
 
       # ------------------------------------------------------------------

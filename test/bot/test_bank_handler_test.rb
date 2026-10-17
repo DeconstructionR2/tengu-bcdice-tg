@@ -298,7 +298,9 @@ class TestBankHandler < Minitest::Test
     assert_includes out, "结果"
     assert_includes out, "350"
     assert_includes out, "100 + 250 = 350", "流水算式"
-    assert_includes out, "已重置"
+    # 2026-10-18：清零改为「发送成功之后」，文案不再提前宣称「已重置」，
+    # 而是说明本条发出后会清零。
+    assert_includes out, "结算：本条发出后清空"
     assert_nil balance, "结算必须真的清零"
   end
 
@@ -353,6 +355,15 @@ class TestBankHandler < Minitest::Test
   # 注入一个「statement 返回 deleted=false」的假 bank：真 DB 走的是抛异常，
   # 但分支必须真能跑通（否则它只是一段永远为假的死代码）。
   class FailingClearBank
+    # 2026-10-18：statement 现在先读账（fetch）再发报、后清零，
+    # 假身也要提供 fetch（否则读路径直接炸成 STORAGE_ERROR）。
+    def fetch(chat_id:, thread_id: nil)
+      TenguDB::BankRecord.new(
+        chat_id: chat_id, thread_id: 0, sum_money: 100,
+        money_record: [100], item_record: [], updated_at: ""
+      )
+    end
+
     def statement(chat_id:, thread_id: nil)
       record = TenguDB::BankRecord.new(
         chat_id: chat_id, thread_id: 0, sum_money: 100,
@@ -499,7 +510,7 @@ class TestBankRouting < Minitest::Test
 
     statement = bank_send(text: "/bank statement", thread_id: TOPIC)
     assert_includes statement[:text], "结果"
-    assert_includes statement[:text], "已重置"
+    assert_includes statement[:text], "结算：本条发出后清空"
     assert_nil @bank.fetch(chat_id: CHAT_ID, thread_id: TOPIC), "结算后账本清空"
   end
 

@@ -49,6 +49,7 @@ require_relative "dice"       # EngineResolver + UNKNOWN_COMMAND 文案（不抄
 require_relative "../telegram_api"
 require_relative "../../db/settings"
 require_relative "../../db/secrets"
+require_relative "../../lib/dice_limits"
 
 module TelegramBot
   module Handlers
@@ -246,9 +247,18 @@ module TelegramBot
           return send_ephemeral(context, chat_id, user_id, SYSTEM_UNAVAILABLE)
         end
 
+        # 引擎上限前置守卫（2026-10-18 审核）：超限静默给 0 的结果也是
+        # 「暗骰结果」，同样不能当成正常出目展示给发起人。
+        limit_error = TelegramBot::DiceLimits.violation(command)
+        return send_ephemeral(context, chat_id, user_id, limit_error) if limit_error
+
         result =
           begin
             klass.eval(command)
+          rescue ::BCDice::TooManyRandsError
+            warn_line("[secret] 骰数超限（system=#{resolved.game_system}）：TooManyRandsError")
+            return send_ephemeral(context, chat_id, user_id,
+                                  TelegramBot::Handlers::DiceHandler::TOO_MANY_DICE)
           rescue StandardError => e
             warn_line("[secret] 引擎执行异常（system=#{resolved.game_system}）：#{e.class}")
             nil
@@ -335,6 +345,22 @@ module TelegramBot
         nil
       rescue StandardError => e
         warn_line("[secret] ephemeral 发送失败（chat_id=#{chat_id}）：#{e.class}")
+        # 兜底（2026-10-18 审核）：ephemeral 发不出去时，此前用户端零反馈，
+        # 结果只躺在 secrets 表里等他自己想到 /secret last。改为一并尝试
+        # **私聊直发**——私聊不经过 ephemeral 语义，通常能送达；用户从未
+        # 与 bot 私聊过时 Telegram 会拒，仍只剩日志（不群里广播，防泄漏）。
+        dm_fallback(context, user_id, text, extra)
+        nil
+      end
+
+      # ephemeral 失败后的私聊兜底（best-effort；失败只记日志）
+      def dm_fallback(context, user_id, text, extra)
+        return nil unless user_id.to_i.positive?
+
+        context[:api]&.send_text(user_id.to_i, text, **extra)
+        nil
+      rescue StandardError => e
+        warn_line("[secret] 私聊兜底也失败（user_id=#{user_id}）：#{e.class}")
         nil
       end
 

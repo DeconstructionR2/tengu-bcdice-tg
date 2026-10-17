@@ -61,62 +61,76 @@ module TelegramBot
   # 切段工具（4096 字符上限，§0.2.4 / §7）
   # --------------------------------------------------------------------------
   module Chunker
+    # Telegram 的上限口径是 **UTF-16 码元**（平台按 UTF-16 计 4096，
+    # 星平面字符如 emoji 算 2 个）。2026-10-18 审核：旧实现按 Ruby 的
+    # 码点数切段，4096 个 emoji 会得到每段 8192 个 UTF-16 单位 → API 400。
     MAX_MESSAGE_LENGTH = 4096
 
     module_function
 
-    # 把长文本切成每段 ≤ limit 字符的数组。
+    # 单个字符的 UTF-16 码元数（星平面 2，其余 1）
+    def utf16_units(str)
+      str.each_char.sum { |ch| ch.ord > 0xFFFF ? 2 : 1 }
+    end
+
+    # 把长文本切成每段 ≤ limit **UTF-16 码元** 的数组。
     #
     # 三条硬要求（缺一即验收不过）：
     #   1. **不丢内容**——所有段 join 回去 == 原文本；
     #   2. **优先按行边界切**——单行能放下就整行走，放不下才回退到强制切；
-    #   3. **按字符数而非字节数**——Telegram 上限是 4096 **字符**（UTF-8
-    #      码点），中文/日文表文本一字符 3 字节；按字节切会把文本切得过碎，
-    #      按 `byteslice` 切还会切坏多字节字符产生乱码。
-    #      故：按 String#each_char 累积字符数，**绝不**用 byteslice/sub。
+    #   3. **按 UTF-16 码元计数**——与 Telegram 的上限口径一致（见上）；
+    #      绝不 byteslice（会切坏多字节字符）。
     #
     # 保留换行：切点落在 "\n" 之后时，换行符归**前**一段，避免产生空行噪声。
     def split(text, limit: MAX_MESSAGE_LENGTH)
       text = text.to_s
-      # 空串在此已被上面一行拦下（[""] 就是正确返回值），后面不再重复判空。
-      return [text] if text.length <= limit
+      return [text] if utf16_units(text) <= limit
 
       segments = []
       current = +""
+      current_units = 0
 
       # 按行扫（保留行尾换行）
       text.each_line do |line|
-        if line.length > limit
+        line_units = utf16_units(line)
+        if line_units > limit
           # 单行超长（无换行的超长文本）：先把已攒的段落冲出去，再硬切这一行
           unless current.empty?
             segments << current
             current = +""
+            current_units = 0
           end
           segments.concat(hard_split(line, limit))
           next
         end
 
-        if current.length + line.length > limit
+        if current_units + line_units > limit
           segments << current
           current = +""
+          current_units = 0
         end
         current << line
+        current_units += line_units
       end
 
       segments << current unless current.empty?
       segments
     end
 
-    # 无换行长文本的兜底硬切：按字符逐个累积，**不**用 byteslice（防切坏多字节）
+    # 无换行长文本的兜底硬切：按字符逐个累积（UTF-16 码元计），不用 byteslice
     def hard_split(text, limit)
       parts = []
       buf = +""
+      buf_units = 0
       text.each_char do |ch|
-        if buf.length + 1 > limit
+        units = ch.ord > 0xFFFF ? 2 : 1
+        if buf_units + units > limit && !buf.empty?
           parts << buf
           buf = +""
+          buf_units = 0
         end
         buf << ch
+        buf_units += units
       end
       parts << buf unless buf.empty?
       parts

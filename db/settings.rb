@@ -179,11 +179,17 @@ module TenguDB
 
     # 直读某一行（原始形态，不做级联）——测试与诊断用
     def fetch_row(chat_id, thread_id)
+      # 读路径与写路径同一套 chat_id 归一（2026-10-18 审核）：非法 id
+      # 直接视为「没有这一行」（回落到默认），不再把 nil/0 拼成一次必然
+      # 空结果的查询——读侧宽容是刻意口径，但归一实现必须与写侧同源。
+      chat = self.class.normalize_chat_id(chat_id)
+      return nil if chat.nil?
+
       normalized = self.class.normalize_thread_id(thread_id)
       @conn.get_first_hash(
         "SELECT chat_id, thread_id, game_system, aux_enabled, updated_at " \
         "FROM chat_settings WHERE chat_id = ? AND thread_id = ?",
-        [chat_id.to_i, normalized]
+        [chat, normalized]
       )
     end
 

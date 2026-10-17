@@ -138,6 +138,14 @@ module TenguDB
     # @param connection [TenguDB::Connection, nil] nil = DB 层单连接
     def initialize(connection = nil)
       @conn = connection || Connection.instance
+      # 启动期顺手清一次过期行（2026-10-18 审核）：TTL 清理只在 create 时
+      # 触发，长期没人掷暗骰时过期行会一直留在表里；进程启动是天然的
+      # 「低频且确定会发生」的清理点。失败不影响启动。
+      begin
+        purge_expired
+      rescue StandardError => e
+        warn("[secrets] 启动期 TTL 清理失败（已忽略）：#{e.class}")
+      end
     end
 
     # ------------------------------------------------------------------
@@ -256,6 +264,13 @@ module TenguDB
       chat = chat_id.to_i
       who = user_id.to_i
       return nil if who <= 0
+
+      # 读前清一次（同 create 的惰性 TTL 纪律）：过期结果不该再被取回。
+      begin
+        purge_expired
+      rescue StandardError
+        nil
+      end
 
       row = conn.get_first_hash(
         "SELECT #{COLUMNS} FROM secrets WHERE chat_id = ? AND user_id = ? " \

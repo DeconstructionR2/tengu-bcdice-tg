@@ -229,7 +229,7 @@ module TenguDB
     # 天狗 updateTableName/addPermission/deletePermission/deleteTable 的判据：
     # permission 的**前三位**（admin 位）——位置即层级，不做集合化简。
     def admins
-      @permissions.first(3)
+      @permissions.first(CustomTables::ADMIN_BIT_COUNT)
     end
 
     def admin?(user_id)
@@ -419,6 +419,10 @@ module TenguDB
     SCOPE_PRIVATE = "private"
     SCOPE_PUBLIC = "public"
     SCOPES = [SCOPE_PRIVATE, SCOPE_PUBLIC].freeze
+
+    # 权限数组的「管理位」个数（母本 permission[0..2]：位置即层级）。
+    # handler 的回执据此区分「进入管理位」与「仅可改骰型/数据」。
+    ADMIN_BIT_COUNT = 3
 
     # 公共表的 chat_id 占位（schema 注释：0=public 占位，避免 NULL 使 UNIQUE
     # 失效——SQLite 中 NULL 互不相等）。天狗侧对应 public_db 的固定 doc '99'。
@@ -686,27 +690,29 @@ module TenguDB
           elsif fetch_row(SCOPE_PUBLIC, PUBLIC_CHAT_ID, key)
             outcome = MutationResult.already_exists
           else
-            begin
-              conn.execute(
-                "INSERT INTO #{TABLE} (scope, chat_id, name, spec, permissions, " \
-                "datarange, author_id, updated_at) " \
-                "SELECT ?, ?, name, spec, permissions, datarange, author_id, " \
-                "datetime('now') FROM #{TABLE} " \
-                "WHERE scope = ? AND chat_id = ? AND name = ?",
-                [SCOPE_PUBLIC, PUBLIC_CHAT_ID, SCOPE_PRIVATE, chat, key]
-              )
-              conn.execute(
-                "DELETE FROM #{TABLE} WHERE scope = ? AND chat_id = ? AND name = ?",
-                [SCOPE_PRIVATE, chat, key]
-              )
-              published = fetch_row_to_table(SCOPE_PUBLIC, PUBLIC_CHAT_ID, key)
-              outcome = MutationResult.ok(published)
-            rescue SQLite3::ConstraintException
-              # UNIQUE 兜底（并发或异常路径）：公共重名 → 整笔回滚，私有表不动
-              outcome = MutationResult.already_exists
-            end
+            conn.execute(
+              "INSERT INTO #{TABLE} (scope, chat_id, name, spec, permissions, " \
+              "datarange, author_id, updated_at) " \
+              "SELECT ?, ?, name, spec, permissions, datarange, author_id, " \
+              "datetime('now') FROM #{TABLE} " \
+              "WHERE scope = ? AND chat_id = ? AND name = ?",
+              [SCOPE_PUBLIC, PUBLIC_CHAT_ID, SCOPE_PRIVATE, chat, key]
+            )
+            conn.execute(
+              "DELETE FROM #{TABLE} WHERE scope = ? AND chat_id = ? AND name = ?",
+              [SCOPE_PRIVATE, chat, key]
+            )
+            published = fetch_row_to_table(SCOPE_PUBLIC, PUBLIC_CHAT_ID, key)
+            outcome = MutationResult.ok(published)
           end
         end
+      rescue SQLite3::ConstraintException
+        # UNIQUE 兜底（并发或异常路径）：公共重名 → 整笔回滚，私有表不动。
+        # ⚠️ rescue 必须在 transaction **块外**（2026-10-18 审核）：块内 rescue
+        # 会把异常吞掉，块正常结束 → COMMIT；SQLite 的 ABORT 只回滚失败的
+        # 那条语句，并不会回滚整笔。当前 INSERT 是块内第一条写，失败时恰好
+        # 无副作用，但语义上必须真正回滚（同 connection.rb 的 savepoint 纪律）。
+        outcome = MutationResult.already_exists
       rescue SQLite3::Exception => e
         warn_line("[custom_tables] 发布失败：#{e.class}")
         return MutationResult.error(e.class)
@@ -1080,9 +1086,14 @@ module TenguDB
       text = index.to_s
       return nil if text.empty?
 
-      if text.match?(/\A\d+\z/) && text.length > 1
-        stripped = text.sub(/\A0+/, "")
-        return stripped.empty? ? "0" : stripped
+      # 纯整数（可带符号）统一为规范写法（"007"→"7"、"-04"→"-4"、"000"→"0"）。
+      # 2026-10-18 审核：负号也要参与归一——`1d6-10` 的合法出目是负数，
+      # 键若写成 "-04" 就与校验/钳制按整数比较的 "-4" 永不相交。
+      if (m = /\A([+-]?)(\d+)\z/.match(text))
+        sign = m[1] == "-" ? "-" : ""
+        digits = m[2].sub(/\A0+/, "")
+        return "0" if digits.empty?
+        return "#{sign}#{digits}"
       end
 
       text

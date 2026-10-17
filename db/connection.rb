@@ -182,17 +182,41 @@ module TenguDB
     # immediate 在 BEGIN 处即取锁，语义更可预期（计划 §4.2 的多表读改写
     # 全走这条路径）。
     #
-    # **已在一个事务里时直接 yield**（不嵌套）：sqlite3 gem 明确不支持嵌套，
-    # 嵌套会抛 "cannot start a transaction within a transaction"。
-    # 让内层复用外层事务，是 savepoint 之外的正确做法（外层失败全回滚）。
+    # **已在一个事务里时用 SAVEPOINT 嵌套**（2026-10-18 审核）：
+    # 旧实现「已在事务里就直接 yield」，内层块里 rescue 掉异常后外层仍会
+    # COMMIT——注释承诺的「外层失败全回滚」只在异常逃出外层块时成立，
+    # 内层半截写会被提交（实测内层异常被吞后 rows 全部落库）。改为真正的
+    # savepoint：内层失败只回滚到内层起点，异常继续上抛时外层再整体回滚。
     def transaction(mode = :immediate)
       @monitor.synchronize do
         if @db.transaction_active?
-          yield self
+          savepoint_transaction { yield self }
         else
           @db.transaction(mode) { yield self }
         end
       end
+    end
+
+    # 嵌套事务（SAVEPOINT）。名字进程内自增，避免同名遮蔽。
+    def savepoint_transaction
+      @savepoint_seq = (@savepoint_seq || 0) + 1
+      name = "tengu_sp_#{@savepoint_seq}"
+
+      @db.execute("SAVEPOINT #{name}")
+      begin
+        result = yield
+      rescue Exception # rubocop:disable Lint/RescueException -- 任何中断都要回滚本层
+        begin
+          @db.execute("ROLLBACK TO SAVEPOINT #{name}")
+          @db.execute("RELEASE SAVEPOINT #{name}")
+        rescue StandardError
+          nil # 回滚失败不能掩盖原始异常
+        end
+        raise
+      end
+
+      @db.execute("RELEASE SAVEPOINT #{name}")
+      result
     end
 
     def transaction_active?

@@ -111,6 +111,11 @@ module TelegramBot
     # 压在人工可接受范围。不缓存 false 的理由见文件头。
     DEFAULT_TTL = 300.0
 
+    # 缓存条目上限的清理阈值（2026-10-18 审核）：此前只在「同 key 再查」
+    # 时删过期项，确认过的 (chat,user) 会永久占位、单调增长。现在每写入
+    # 一条、且表超过阈值时整体扫一遍过期项（O(n) 但只在阈值以上触发）。
+    CACHE_SWEEP_THRESHOLD = 512
+
     # 构造一个 Admin（handler 与 main.rb 共享同一实例，才能共用缓存）
     #
     # @param api [TelegramBot::TelegramApi, nil] 发送通道（提供 gem api_client
@@ -304,8 +309,22 @@ module TelegramBot
       # 时钟故障期（now=+∞）写入的条目会是 ∞，时钟恢复后 ∞ > now(recovered)
       # 恒真 = 永不过期（撤职延迟无限）——故障窗口不写缓存，让它每次真查
       # （fail-closed 方向；2026-10-13 审核补齐「恢复后残留」窗口）。
-      @admin_cache[[chat_id, user_id]] = expires_at unless expires_at.infinite?
+      unless expires_at.infinite?
+        @admin_cache[[chat_id, user_id]] = expires_at
+        sweep_cache if @admin_cache.size > CACHE_SWEEP_THRESHOLD
+      end
       true
+    end
+
+    # 过期项整体清理（阈值以上才触发；now 异常时整表清空——宁可多查几次 API）
+    def sweep_cache
+      t = now
+      if t.infinite?
+        @admin_cache.clear
+      else
+        @admin_cache.delete_if { |_key, expires_at| expires_at <= t }
+      end
+      nil
     end
 
     def now

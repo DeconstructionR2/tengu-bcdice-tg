@@ -216,6 +216,12 @@ module TenguDB
     INT64_MAX = 9_223_372_036_854_775_807
     INT64_MIN = -9_223_372_036_854_775_808
 
+    # 单个 log 的条目上限（2026-10-18 审核：此前既无保留期也无上限，
+    # `/log new` 后忘记 end 就会每条群消息永久入库，导出时全量读入内存）。
+    # 取 seq 现算值做判据（seq 单调递增且不删除），不额外查 count。
+    # 20000 条 ≈ 一个长期战役数周的量；超出时录制停写并 warn 一次。
+    MAX_ENTRIES = 20_000
+
     LOG_COLUMNS = "id, chat_id, thread_id, name, status, created_at, ended_at"
     # list 是 JOIN 式查询（session_logs + 条目数子查询），列必须带表前缀
     LOG_COLUMNS_QUALIFIED = "l.id, l.chat_id, l.thread_id, l.name, l.status, " \
@@ -227,6 +233,7 @@ module TenguDB
     def initialize(connection = nil, logger: ::Logger.new($stderr))
       @conn = connection || Connection.instance
       @logger = logger
+      @cap_warned = {}
     end
 
     # thread 归一（**唯一实现在 Settings**，此处只做转发——同 bank.rb）
@@ -393,6 +400,13 @@ module TenguDB
           "SELECT COALESCE(MAX(seq), 0) + 1 FROM log_entries WHERE log_id = ?",
           [log]
         ).to_i
+        if seq > MAX_ENTRIES
+          # 到达上限：不再写入（不静默丢最旧的——导出仍与库里一致），
+          # 每个 log 只 warn 一次，避免热路径刷日志。
+          warn_entry_cap(log)
+          next
+        end
+
         conn.execute(
           "INSERT INTO log_entries (log_id, seq, sender_name, user_id, is_bot, " \
           "msg_kind, content, created_at) " \
@@ -412,6 +426,16 @@ module TenguDB
     private
 
     attr_reader :conn
+
+    # 条目上限告警（每个 log 一次；只记结构性信息）
+    def warn_entry_cap(log_id)
+      return if @cap_warned[log_id]
+
+      @cap_warned[log_id] = true
+      @logger.warn("[session_logs] log #{log_id} 已达条目上限 #{MAX_ENTRIES}，后续消息不再录制")
+    rescue StandardError
+      nil
+    end
 
     # 状态机共同底座：找 active 行（无 → :no_active）→ 目标态已于当前态
     # → 原样返回 + unchanged 码 → 否则 UPDATE（ended 时同时写 ended_at）。

@@ -522,9 +522,9 @@ class TestCustomTableHandler < Minitest::Test
   def test_data_set_validates_index_and_text
     seed_table("数据表")
 
-    ["3a", "-1", "1.5", "０３"].each do |bad|
-      assert_includes ct_call("data set 数据表 #{bad} 文本"), "出目号必须是半角数字",
-                      "#{bad.inspect} 应被拒（母本 ^\\d+$）"
+    ["3a", "1.5", "０３"].each do |bad|
+      assert_includes ct_call("data set 数据表 #{bad} 文本"), "出目号必须是半角整数",
+                      "#{bad.inspect} 应被拒（半角整数校验）"
     end
     assert_includes ct_call("data set 数据表 3"), "参数个数不对"
     assert_includes ct_call("data set 数据表 3 t"), "结果文本为空", "flag 之后必须有文本"
@@ -747,7 +747,9 @@ class TestCustomTableHandler < Minitest::Test
     # 超限必须**快速**拒发（Timeout 守护断言它不再枚举）。
     seed_table("防爆表")
     ct_call("data set 防爆表 1 一") # 2026-10-13 空表底线：先补数据把流程推进到被测分支
-    ct_call("dice set 防爆表 a 9d999999999")
+    # 2026-10-18：骰数/面数上限已前置拦截（9d999999999 会在 dice set 被拒），
+    # 改用合法上限内的骰式制造 >10000 档：200d100 → 200..20000。
+    ct_call("dice set 防爆表 a 200d100")
 
     out = nil
     Timeout.timeout(5) { out = ct_call("publish 防爆表") }

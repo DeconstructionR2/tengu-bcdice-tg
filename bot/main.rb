@@ -226,8 +226,9 @@ settings_handler = TelegramBot::Handlers::SettingsHandler.new(
 
 # T3.2：天狗银行。与上面共用同一 Connection（单连接纪律，§3 决9）。
 # Bank 的四个操作都是「事务内整行读改写」，不持有常驻资源。
+# 构造挪到 recorder 之后（2026-10-18）：`/bank statement` 改为 handler 自己
+# 发送报表（先发后清零），绕过 router 的代发录制点，故要注入同一 recorder。
 bank_store = TenguDB::Bank.new(dice_db)
-bank_handler = TelegramBot::Handlers::BankHandler.new(bank: bank_store)
 
 # T3.4：自定义表 /ct。custom_tables 与上面共用同一 Connection；admin 用**同一
 # 个** Admin 实例（缓存跨消息复用，见 T2.6 纪律）；builtin 缺省 = BuiltinTables
@@ -248,6 +249,11 @@ session_log_handler = TelegramBot::Handlers::SessionLogHandler.new(
 session_log_recorder = TelegramBot::SessionLogRecorder.new(
   session_logs: session_logs_store, enabled: logging_enabled,
   bot_name: bot_username || "骰子bot"
+)
+
+# T3.2：银行 handler（依赖 recorder，见上）
+bank_handler = TelegramBot::Handlers::BankHandler.new(
+  bank: bank_store, session_log: session_log_recorder
 )
 
 # T3.1：暗骰 handler 在 recorder 之后构造——「公开」按钮把结果发成群内公开

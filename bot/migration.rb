@@ -296,13 +296,24 @@ module TelegramBot
       nil # 诊断自身失败不得掩盖原始异常（调用方会重抛原异常）
     end
 
-    # nil / 空串 → nil；其余一律 to_i（**统一 64 位口径**，§0.2.4：
-    # chat_id 可超 32 位有效位，入站若给字符串也不能丢精度）
+    # nil / 空串 / 0 / 超 int64 → nil；其余一律 to_i（**统一 64 位口径**，
+    # §0.2.4：chat_id 可超 32 位有效位，入站若给字符串也不能丢精度）。
+    #
+    # 2026-10-18 审核：补 int64 界守卫，与 bank/settings/custom_tables/
+    # secrets/session_logs 的同款入口同口径——超界值会被 UPDATE 静默写成
+    # REAL，事务「成功」且无告警，该群数据此后按整数查询永不命中。
+    INT64_MAX = 9_223_372_036_854_775_807
+    INT64_MIN = -9_223_372_036_854_775_808
+
     def id_of(value)
       return nil if value.nil?
       return nil if value.is_a?(String) && value.strip.empty?
 
-      value.to_i
+      id = value.to_i
+      return nil if id.zero?
+      return nil unless id.between?(INT64_MIN, INT64_MAX)
+
+      id
     end
   end
 end

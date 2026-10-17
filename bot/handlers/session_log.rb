@@ -237,10 +237,20 @@ module TelegramBot
         lines << "-----"
         entries.each do |entry|
           marker = entry.bot? ? "[bot] " : ""
+          # 多行内容缩进续行（2026-10-18 审核）：此前 content 里的换行原样
+          # 拼进输出，任何成员发一条含 `\n[0099] … 名：…` 的消息就能在导出里
+          # 伪造出一条与真实条目同形的新行（json 导出不受影响）。
+          # 续行统一加 4 空格前缀：内容不丢，且不再与本格式的行首同形。
           lines << format("[%04d] %s %s%s：%s",
-                          entry.seq, entry.created_at, marker, entry.sender_name, entry.content)
+                          entry.seq, entry.created_at, marker,
+                          txt_indent(entry.sender_name), txt_indent(entry.content))
         end
         "#{lines.join("\n")}\n"
+      end
+
+      # txt 导出的多行安全化：CR/LF 与 Unicode 行/段分隔符 → 换行 + 4 空格缩进
+      def txt_indent(text)
+        text.to_s.gsub(/\r\n|\r|\n|\u2028|\u2029/, "\n    ")
       end
 
       # json 导出：结构化全字段（is_bot 在 json 里是布尔，落库形态是 0/1）

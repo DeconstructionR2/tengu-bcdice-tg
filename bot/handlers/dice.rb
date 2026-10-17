@@ -44,6 +44,7 @@ require "logger"
 
 require_relative "../telegram_api" # MainMenu 等；也保证发送层的存在
 require_relative "../../db/settings"
+require_relative "../../lib/dice_limits"
 
 module TelegramBot
   module Handlers
@@ -116,6 +117,15 @@ module TelegramBot
 
       # 引擎不接受该命令时的提示（slash 轨专用；辅助轨静默）
       UNKNOWN_COMMAND = "当前规则系统不接受这个命令。换 /system <系统ID> 可切换规则系统。"
+
+      # 引擎内部上限被撞到时的提示（2026-10-18 审核）
+      #
+      # BCDice 对超限骰组的两种失败形态都不适合直接展示：
+      #   - times>200 / sides>10000 → 静默返回空集，求和为 0（结果看起来正常）；
+      #   - 更大的量（如 20001d6）→ 抛 TooManyRandsError。
+      # 前者在 eval 前由 DiceLimits 拦；后者在这里单独成一类回执，
+      # 不再与「规则系统不认识这条命令」混为一谈。
+      TOO_MANY_DICE = "骰子数量或面数超出一次可处理的量（最多 200 颗 / 10000 面），请减少后重试。"
 
       # 暗骰（S 前缀）提示（slash 轨专用；**绝不含结果**；辅助轨静默）
       #
@@ -266,13 +276,28 @@ module TelegramBot
           return "规则系统 #{system_id} 当前不可用（可能已被移除）。请用 /system <其他ID> 切换。"
         end
 
+        # 引擎上限前置守卫（2026-10-18 审核）：超限时引擎会静默给 0，
+        # 必须在 eval 之前拦下并明示（辅助轨按静默契约返回 nil）。
+        limit_error = DiceLimits.violation(text)
+        if limit_error
+          return nil if silent
+
+          return limit_error
+        end
+
         result =
           begin
             klass.eval(text)
+          rescue ::BCDice::TooManyRandsError
+            # 超限的另一形态（引擎内部抛）：与「命令不认识」区分开
+            warn_line("[dice] 骰数超限（system=#{system_id}）：TooManyRandsError")
+            :too_many_rands
           rescue StandardError => e
             warn_line("[dice] 引擎执行异常（system=#{system_id}）：#{e.class}")
             nil
           end
+
+        return (silent ? nil : TOO_MANY_DICE) if result == :too_many_rands
 
         # 引擎不接受 → nil
         if result.nil?

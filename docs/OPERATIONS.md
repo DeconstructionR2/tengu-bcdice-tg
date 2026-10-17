@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 863）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 888）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
@@ -120,7 +120,7 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 当前保存的 tag（2026-10-13 实测 `sudo docker images`，会随版本演进）：
 仅 `tengu-bcdice-tg:latest`（`b2ef6b431df7`，S1-audit 四路深审修复版：
 长轮询超时竞争 / `/ct publish` 回执上限 / 空壳表底线 / 守卫与文案对称串修等，
-863 runs 口径；基线含 `54cb72b`（S1-audit）全部成果）。上一版 latest
+887 runs 口径；基线含 `54cb72b`（S1-audit）全部成果）。上一版 latest
 （`80161449e6d8`，fix4 版）与其后重建版（`d482ab916643`）已随本轮换版清理
 （共释放 >600MB 镜像空间）；历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户
 拍板的「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；**换版前仍按
@@ -562,6 +562,43 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
    `extract_tengu_data.mjs` 产物含 node_version（md5 仅同机可比）。
 
 ---
+
+### 5.6 复现验证后修复登记（2026-10-18，第六棒：独立复现 + 全量修复）
+
+对上一轮审计的 15 条发现做独立复现（M3.1 Flash 逐条探针实证；K3 轮因 provider
+网络中断未产出裁定，用户中止）。15 条全部成立，随后按用户拍板**全部修复**
+（`/bank reset` 明确保持上游无权限模型，不补管理员门槛；负出目按天狗语义
+**允许**）。修复要点：
+
+1. **用户文本的单行化**（高）：`/ct roll` / `/ct show` 与 txt 导出此前把
+   `content` 原样拼行，任何成员可用换行伪造「另一张表的掷骰行 / 成员发言」。
+   现：自建表的掷表正文与 show 列表折叠换行为 `⏎`；txt 导出续行加 4 空格缩进；
+   内置表（i18n 受信内容）保持引擎原文。
+2. **骰数/面数上限**（中）：`300d6` / `1d1000000` 在 BCDice 里静默求和为 0，
+   `20001d6` 抛 `TooManyRandsError` 被译成「规则系统不接受」。新增
+   `lib/dice_limits.rb`（200 颗 / 10000 面，与引擎上限一致），`/roll`、`/nd`、
+   `/secret`、`/ct dice set`、`/ct roll` 全部前置拦截并给专用文案。
+3. **结算顺序**（中）：`/bank statement` 改为「先发报表、成功后再清零」；
+   发送失败时账目保持原样并回执「发送失败…未清零」。
+4. **管理位回执**（中）：`perm add` 落在前三位（管理位）时回执明示
+   「管理位：可改名/发布/删除，前三位不可移除」（数据语义仍照母本）。
+5. **日志上限**（中）：`log_entries` 每个 log 20_000 条上限，超出停写并 warn
+   一次（不再无限增长，导出内存有界）。
+6. **出目与配额**：`data set/del` 接受负出目（`1d6-10` 的 -9..-4 可录入）；
+   快捷名 ≤32 字符；`/ct show` 数据行 ≤200、`/ct list` 每节 ≤200、掷表正文
+   ≤2000 字符，超限明示截断；表名拒绝全部 Unicode 分隔符（`\p{Z}`）与
+   `Cc/Cf` 控制/格式字符。
+7. **暗骰可用性**：ephemeral 失败后追加**私聊直发**兜底（用户从未私聊过 bot
+   时仍只剩日志，不群里广播）。
+8. **存储健壮性**：`connection.transaction` 嵌套改用 SAVEPOINT（内层异常不再
+   被外层提交）；`publish_table` 的 UNIQUE 兜底移出事务块（真正回滚）；
+   `secrets` 补 `(chat_id,user_id,created_at)` 索引并在构造/`latest_for` 时清
+   过期行；`migration.id_of` 补 int64 守卫；`settings` 读路径与写路径共用
+   `normalize_chat_id`；`admin` 缓存超过 512 条时整体扫过期项。
+9. **Chunker**：改按 **UTF-16 码元**计数（星平面字符算 2），与 Telegram 的
+   4096 口径一致（此前 4096 个 emoji 会切出 8192 单位被 400）。
+10. **订正**：测试基线 863 → **888**（+25 钉测，`test_audit_2026_10_18_test.rb`）。
+    刻意保留：`/bank reset`/`statement` 无权限模型（上游同款，用户拍板）。
 
 ## 6. 紧急处置（bot 无响应时的排查顺序）
 

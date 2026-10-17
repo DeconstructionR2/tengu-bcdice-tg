@@ -150,6 +150,7 @@ require "logger"
 
 require_relative "../admin"
 require_relative "../../db/custom_tables"
+require_relative "../../lib/dice_limits"
 require "bcdice/randomizer"
 
 module TelegramBot
@@ -337,6 +338,9 @@ module TelegramBot
       DICE_NAME_FORBIDDEN = /[#\[\]()'`",.\\\/\s\x08　]/
       # 母本 updateData.js:44 / deleteData.js:48 / addPermission.js:34
       DIGITS_PATTERN = /\A\d+\z/
+      # 出目号（2026-10-18 审核：负出目与「先加后减」类骰式配套，
+      # `1d6-10` 的合法出目是 -9..-4，只收 \d+ 会让这类表永远缺数据）
+      SIGNED_DIGITS_PATTERN = /\A[+-]?\d+\z/
       # range 子命令的整数（可带正负号；上下界守卫在解析后做）
       DIGITS_WITH_SIGN_PATTERN = /\A[+-]?\d+\z/
       # flag token（母本 checkFlagString `/^[tTfF]$/`）
@@ -344,6 +348,18 @@ module TelegramBot
 
       # 表名规则（适配版，见文件头 ①与报告 §4 决策 1）
       NAME_MAX_LENGTH = 32
+      # 快捷名长度上限（2026-10-18 审核：此前只挡禁用字符，300 字符的
+      # 快捷名照样进库并撑爆 /ct list / show 的每行输出）
+      DICE_NAME_MAX_LENGTH = 32
+
+      # 输出配额（2026-10-18 审核：消息按 4096 切段、发送 1 条/秒，
+      # 一条 /ct show 可以阻塞单线程轮询数十秒。超限改为明示截断）
+      MAX_DATA_PREVIEW = 200
+      MAX_TABLE_LIST = 200
+      MAX_ROLL_BODY = 2000
+      # 单条回复的文本预算（字符）：条数上限之外还要有总长上限，
+      # 否则「200 行 × 每行 2000 字符」仍能产出上百段消息。
+      MAX_SHOW_TEXT = 8000
 
       # 初始/默认骰型名（母本 `temp[1] ? temp[1] : "a"`）
       DEFAULT_DICE_NAME = "a"
@@ -357,7 +373,8 @@ module TelegramBot
       BAD_TABLE_NAME = "表名无效：不能含空白或控制字符，长度 1..#{NAME_MAX_LENGTH} 个字符。"
       BAD_DICE_EXPR = "骰式格式错误。用 1d6、2d6+3、3d6+x 这类写法（支持 + - 与 +x 结尾）。"
       BAD_DICE_NAME = "快捷名不能含空白、#、[、]、(、)、'、`、\"、,、.、\\、/ 这些字符。"
-      BAD_INDEX = "出目号必须是半角数字（如 3、12）。"
+      BAD_DICE_NAME_LENGTH = "快捷名过长（最多 #{DICE_NAME_MAX_LENGTH} 个字符）。"
+      BAD_INDEX = "出目号必须是半角整数（如 3、12；负出目写 -4）。"
       BAD_USER_ID = "用户 ID 必须是半角数字。"
       BAD_RANGE = "范围钳参数无效：需要「最小 最大」两个整数（可带负号），或 off。"
       RANGE_INVERTED = "范围钳无效：最小不能大于最大。"
@@ -530,6 +547,12 @@ module TelegramBot
         # 母本 check：骰式正则先于小写化判定（1D6+X 会被拒，同母本）
         return BAD_DICE_EXPR unless DICE_EXPR_PATTERN.match?(expr)
         return BAD_DICE_NAME if DICE_NAME_FORBIDDEN.match?(dice_name)
+        # 长度配额 + 引擎上限（2026-10-18 审核）：超限骰式若存进去，
+        # 掷表时引擎会静默给 0，等于一条永远掷出 0 的假骰型。
+        return BAD_DICE_NAME_LENGTH if dice_name.length > DICE_NAME_MAX_LENGTH
+
+        limit_error = TelegramBot::DiceLimits.violation(expr)
+        return limit_error if limit_error
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -619,9 +642,10 @@ module TelegramBot
         tail = head[3]
         return BAD_TABLE_NAME unless valid_table_name?(name)
         # 母本 updateData.js:44：出目必须是半角数字（放行字符串数字键语义由 db 层管）
-        return BAD_INDEX unless DIGITS_PATTERN.match?(index)
-        # 前导零归一（"007"→"7"，2026-10-13 审核：键与校验/钳制按规范整数比较
-        # 不同源时数据永远打不到；db 层 normalize_data_index 同款兜底）
+        # 2026-10-18 审核：放行负号——`1d6-10` 这类移位骰式的出目是 -9..-4，
+        # 只收 \d+ 会造成「能被 publish 要求、却无法录入」的死角。
+        return BAD_INDEX unless SIGNED_DIGITS_PATTERN.match?(index)
+        # 前导零归一（"007"→"7"、"-04"→"-4"；db 层 normalize_data_index 同款兜底）
         index = index.to_i.to_s
 
         flag = nil
@@ -662,8 +686,8 @@ module TelegramBot
 
         (name, index), flag = parsed
         return BAD_TABLE_NAME unless valid_table_name?(name)
-        return BAD_INDEX unless DIGITS_PATTERN.match?(index)
-        index = index.to_i.to_s # 前导零归一（同 data set，2026-10-13 审核）
+        return BAD_INDEX unless SIGNED_DIGITS_PATTERN.match?(index)
+        index = index.to_i.to_s # 前导零/正负号归一（同 data set）
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -787,7 +811,17 @@ module TelegramBot
         return STORAGE_ERROR if result.error?
         return not_found(name, scope) if result.not_found?
 
-        "已给表「#{name}」添加权限：#{user_id}（可改骰型与出目数据）。"
+        # 母本的权限数组是**位置即层级**：前三位 = 管理位（可改名/发布/删表，
+        # 且 deletePermission 不允许删前三位）。建表默认只有 [author]，
+        # 于是第 2、3 次 perm add 会把对方静默送进管理位且事后无法撤回。
+        # 2026-10-18 审核：不改母本数据语义（保持位置层级），但回执必须
+        # 如实说明——否则「可改骰型与出目数据」会让人以为是低权限。
+        if table.permissions.size < TenguDB::CustomTables::ADMIN_BIT_COUNT
+          "已给表「#{name}」添加权限：#{user_id}（**管理位**：可改名、发布、删除本表；" \
+            "前三位不可移除）。"
+        else
+          "已给表「#{name}」添加权限：#{user_id}（可改骰型与出目数据）。"
+        end
       end
 
       def sub_perm_del(context, rest)
@@ -807,7 +841,7 @@ module TelegramBot
         return NOT_ADMIN_BITS unless write_allowed?(table, context, :admin_bits)
 
         user_id = uid.to_i
-        admins = table.permissions.first(3)
+        admins = table.admins
         # 母本 :17-20 管理範囲チェック：前三位不许删（含建表者本人）
         return "不能删除权限前三位（管理位）的用户：#{user_id}。" if admins.include?(user_id)
 
@@ -1244,6 +1278,9 @@ module TelegramBot
 
       # 求值：TERM([+-]TERM)*，TERM = \d+ 或 \d+d\d+（命令层正则已限定形态）
       def roll_expression(expr)
+        # 手工改库/旧数据兜底：超引擎上限的骰式会静默掷出 0（见 lib/dice_limits.rb）
+        return nil if TelegramBot::DiceLimits.violation(expr)
+
         total = 0
         groups = expr.to_s.scan(/([+-]?)(\d+)(?:[dD](\d+))?/)
         return nil if groups.empty?
@@ -1274,7 +1311,25 @@ module TelegramBot
         head += clamp_note(raw, clamped, table.datarange) if clamped != raw
         body = table.data_entry(clamped)
         body = "（出目 #{clamped} 没有登记数据）" if body.nil?
+        # 换行折叠（2026-10-18 审核）：**用户自建表**的内容是用户输入，
+        # 原样带换行就能伪造「另一张表的掷骰行」或伪造成员发言。掷表输出
+        # 恒定一条头 + 一条正文，正文里的换行以 ⏎ 明示。
+        # 内置表（i18n 数据）是受信内容，保持引擎原文（多段落是设计的一部分）。
+        unless resolution.builtin
+          body = truncate_output(oneline(body), MAX_ROLL_BODY)
+        end
         "#{head}\n#{body}"
+      end
+
+      # 把任意用户文本压成单行（换行与 Unicode 行/段分隔符都折成 ⏎）
+      def oneline(text)
+        text.to_s.gsub(/[\r\n\u2028\u2029]/, " ⏎ ")
+      end
+
+      def truncate_output(text, limit)
+        return text if text.length <= limit
+
+        "#{text[0, limit]}…（内容过长，已截断）"
       end
 
       # 钳制标注（T1.4 的「钳制发生时明示」约定；天狗静默取端点）
@@ -1303,8 +1358,22 @@ module TelegramBot
         if table.data.empty?
           lines << "（无）"
         else
-          table.data.sort_by { |k, _| k.to_s.to_i }.each do |k, v|
-            lines << "#{k}：#{v}"
+          sorted = table.data.sort_by { |k, _| k.to_s.to_i }
+          shown = sorted.first(MAX_DATA_PREVIEW)
+          budget = MAX_SHOW_TEXT
+          printed = 0
+          shown.each do |k, v|
+            # 单行化 + 截断（同 render_roll：防止伪造多行结构）
+            line = "#{k}：#{truncate_output(oneline(v), MAX_ROLL_BODY)}"
+            break if line.length > budget
+
+            lines << line
+            printed += 1
+            budget -= line.length
+          end
+          if printed < sorted.size
+            lines << "（共 #{sorted.size} 档，此处显示前 #{printed} 档；" \
+                     "其余请用 /ct data set 覆盖或 /ct data del 删除）"
           end
         end
         lines.join("\n")
@@ -1323,9 +1392,19 @@ module TelegramBot
         if tables.nil? || tables.empty?
           lines << "（无）"
         else
-          tables.each do |t|
+          budget = MAX_SHOW_TEXT
+          printed = 0
+          tables.first(MAX_TABLE_LIST).each do |t|
             dice_part = t.dice.map { |k, v| "#{k} : #{v}" }.join(" , ")
-            lines << "#{t.name} — #{dice_part}"
+            line = "#{t.name} — #{dice_part}"
+            break if line.length > budget
+
+            lines << line
+            printed += 1
+            budget -= line.length
+          end
+          if printed < tables.size
+            lines << "（共 #{tables.size} 张，此处显示前 #{printed} 张）"
           end
         end
         lines
@@ -1375,8 +1454,9 @@ module TelegramBot
       def valid_table_name?(name)
         text = name.to_s
         return false if text.empty? || text.length > NAME_MAX_LENGTH
-        return false if /\s/.match?(text) || /\u3000/.match?(text)
-        return false if /[\x00-\x1f\x7f]/.match?(text)
+        # 2026-10-18 审核：只挡 ASCII \s 与 U+3000 会放过 U+2028/U+2029 等
+        # Unicode 行/段分隔符与零宽/格式字符（Cf），后者能在列表里伪造换行。
+        return false if /\p{Z}|\p{Cc}|\p{Cf}/.match?(text)
 
         true
       end

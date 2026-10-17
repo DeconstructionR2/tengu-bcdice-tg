@@ -115,6 +115,10 @@ DROP INDEX IF EXISTS idx_log_entries_log;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_log_entries_log_uniq ON log_entries(log_id, seq);
 -- 录制热路径：每条入站消息一次 recording_for 查询（kimi T3.5 评审提案 #6）
 CREATE INDEX IF NOT EXISTS idx_session_logs_scope ON session_logs(chat_id, thread_id, status);
+-- 暗骰的「取回最近一条」（/secret last）与 TTL 清理（2026-10-18 审核：
+-- latest_for 按 (chat_id,user_id) 过滤 + created_at 排序，此前只能全表扫；
+-- purge_expired 也按 created_at 扫）
+CREATE INDEX IF NOT EXISTS idx_secrets_owner_time ON secrets(chat_id, user_id, created_at);
 
 -- ============================================================================
 -- 索引（除 log_entries 与 session_logs 两条外，按 T2.4 的实际访问模式补）
@@ -122,8 +126,9 @@ CREATE INDEX IF NOT EXISTS idx_session_logs_scope ON session_logs(chat_id, threa
 -- 为什么不逐表补索引而只在必要处补：
 --   - chat_settings / bank_record：主键 (chat_id, thread_id) 前缀已覆盖
 --     「按群/话题查」这一唯一热路径 → 再加索引是纯写放大；
---   - secrets：按「公开按钮回调 id」查（主键）+ 按 chat 清理（T3.1），
---     后者非热路径，暂不建；
+--   - secrets：按「公开按钮回调 id」查（主键）+ 按 (chat,user,time) 取回
+--     最近一条（idx_secrets_owner_time，2026-10-18 补）；TTL 清理走
+--     create / 启动时的一次 purge，不再依赖单独索引；
 --   - session_logs：T3.5 的「列出本群 log」按 chat_id 查，
 --     属低频（每人每天几次）→ 等 T3.5 有实测访问模式再定，避免过早优化。
 --   后续任务加索引时，请在此处写明**为什么现在需要**（同上的纪律）。
