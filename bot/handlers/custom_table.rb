@@ -335,7 +335,10 @@ module TelegramBot
       # 母本 command_utility.js:8-11 checkInvalidCharForDice（快捷名禁用字符集）
       # 注：母本字符类含 \b（\x08 退格）；Ruby 的 \s 不含它，显式补上
       # （kimi T3.4 评审提案 #4）
-      DICE_NAME_FORBIDDEN = /[#\[\]()'`",.\\\/\s\x08　]/
+      # 2026-10-18 复审：母本的 \s 同样不含 U+2028/U+2029/NBSP 等 Unicode
+      # 空白与格式字符，快捷名会把行/段分隔符带进 show/roll/list 的输出。
+      # 与表名同口径：\p{Z}（全部空格类）+ \p{Cc}/\p{Cf}（控制/格式）。
+      DICE_NAME_FORBIDDEN = /[#\[\]()'`",.\\\/\s\x08　\p{Z}\p{Cc}\p{Cf}]/
       # 母本 updateData.js:44 / deleteData.js:48 / addPermission.js:34
       DIGITS_PATTERN = /\A\d+\z/
       # 出目号（2026-10-18 审核：负出目与「先加后减」类骰式配套，
@@ -477,6 +480,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         name = tokens[0]
+        # 新建走**严格**规则（唯一入口，此后不再产生带分隔符的表名）
         return BAD_TABLE_NAME unless valid_table_name?(name)
 
         # 母本 createTable.js:10-13：**先查内置表、再查本群同名**（两路都要拦）
@@ -504,7 +508,8 @@ module TelegramBot
         (old_name, new_name), flag = parsed
         # 母本 check 顺序：旧==新 先于 名字合法性（updateTableName.js:39-42）
         return "旧表名与新表名相同。" if old_name == new_name
-        return BAD_TABLE_NAME unless valid_table_name?(old_name) && valid_table_name?(new_name)
+        # 旧名是寻址（允许存量名字），新名是新建（严格）
+        return BAD_TABLE_NAME unless explicit_name?(old_name) && valid_table_name?(new_name)
 
         scope = scope_of(flag)
         table = fetch_table(context, old_name, scope)
@@ -543,7 +548,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name, dice_name, expr), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         # 母本 check：骰式正则先于小写化判定（1D6+X 会被拒，同母本）
         return BAD_DICE_EXPR unless DICE_EXPR_PATTERN.match?(expr)
         return BAD_DICE_NAME if DICE_NAME_FORBIDDEN.match?(dice_name)
@@ -584,7 +589,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name, dice_name), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         # 母本 deleteDice.js:42：a（默认骰型）不可删；判定在小写化之前（aA 都拒）
         return "快捷名「a」（默认骰型）不能删；要改请用 /ct dice set。" if PROTECTED_DICE_NAMES.include?(dice_name)
         return BAD_DICE_NAME if DICE_NAME_FORBIDDEN.match?(dice_name)
@@ -640,7 +645,7 @@ module TelegramBot
         name = head[1]
         index = head[2]
         tail = head[3]
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         # 母本 updateData.js:44：出目必须是半角数字（放行字符串数字键语义由 db 层管）
         # 2026-10-18 审核：放行负号——`1d6-10` 这类移位骰式的出目是 -9..-4，
         # 只收 \d+ 会造成「能被 publish 要求、却无法录入」的死角。
@@ -685,7 +690,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name, index), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         return BAD_INDEX unless SIGNED_DIGITS_PATTERN.match?(index)
         index = index.to_i.to_s # 前导零/正负号归一（同 data set）
 
@@ -739,7 +744,7 @@ module TelegramBot
         end
 
         name = argv[0]
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -788,7 +793,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name, uid), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         return BAD_USER_ID unless DIGITS_PATTERN.match?(uid)
 
         scope = scope_of(flag)
@@ -831,7 +836,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name, uid), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
         return BAD_USER_ID unless DIGITS_PATTERN.match?(uid)
 
         scope = scope_of(flag)
@@ -869,7 +874,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         name = tokens[0]
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
 
         table = fetch_table(context, name, :private)
         return not_found(name, :private) if table.nil?
@@ -905,7 +910,7 @@ module TelegramBot
         return CALLER_UNKNOWN unless caller_id(context)
 
         (name,), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        return BAD_TABLE_NAME unless explicit_name?(name)
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -936,7 +941,11 @@ module TelegramBot
         return BAD_FLAG if parsed == :bad_flag
 
         (name,), flag = parsed
-        return BAD_TABLE_NAME unless valid_table_name?(name)
+        # 读路径放宽（2026-10-18 复审）：表名规则收紧后，修复前建的表可能
+        # 含 U+2028 等字符——用同一套规则校验会让它们「show 打不开、但仍能
+        # roll/list」，属可用性回归。读侧只做「非空 + 长度」守卫，显示前
+        # 统一走 oneline 折叠。
+        return BAD_ARGS if name.to_s.empty? || name.to_s.length > NAME_MAX_LENGTH
 
         scope = scope_of(flag)
         table = fetch_table(context, name, scope)
@@ -976,21 +985,21 @@ module TelegramBot
           name: name, chat_id: context[:chat_id].to_i, builtin: builtin_source
         )
         unless resolution.found?
-          return "找不到表「#{name}」（内置表、本群表、公共表里都没有）。"
+          return "找不到表「#{oneline(name)}」（内置表、本群表、公共表里都没有）。"
         end
 
         table = resolution.builtin || resolution.table
         expr = table.dice_string(kind)
-        return format(DICE_MISSING, name, kind) if expr.nil? || expr.empty?
+        return format(DICE_MISSING, oneline(name), oneline(kind)) if expr.nil? || expr.empty?
 
         # `+x` 可変数（SearchTableDiceroll.js:55-77）：含 +x 时才处理補正值；
         # 補正值非数字 → 视同未给（天狗原文「数字ではない値を与えられた場合は無視」）。
         has_addition = expr.include?("+x")
         rolled_expr = substitute_addition(expr, adjust, has_addition)
-        return "表「#{name}」的骰式「#{expr}」无法解析（可能被手工改动）。" unless DICE_EXPR_PATTERN.match?(rollable(rolled_expr))
+        return "表「#{oneline(name)}」的骰式「#{oneline(expr)}」无法解析（可能被手工改动）。" unless DICE_EXPR_PATTERN.match?(rollable(rolled_expr))
 
         raw = roll_expression(rollable(rolled_expr))
-        return "表「#{name}」的骰式「#{expr}」无法解析（可能被手工改动）。" if raw.nil?
+        return "表「#{oneline(name)}」的骰式「#{oneline(expr)}」无法解析（可能被手工改动）。" if raw.nil?
 
         # datarange 钳制（NJDiscordReply.js:91-95）：仅 +x 掷时、且钳制有界时生效
         clamped = raw
@@ -1307,13 +1316,15 @@ module TelegramBot
       # ==================================================================
 
       def render_roll(resolution, name, kind, expr, raw, clamped, table)
-        head = "#{source_label(resolution)}「#{name}」(#{kind})：#{expr} ＞ #{raw}"
+        head = "#{source_label(resolution)}「#{oneline(name)}」" \
+               "(#{oneline(kind)})：#{oneline(expr)} ＞ #{raw}"
         head += clamp_note(raw, clamped, table.datarange) if clamped != raw
         body = table.data_entry(clamped)
         body = "（出目 #{clamped} 没有登记数据）" if body.nil?
         # 换行折叠（2026-10-18 审核）：**用户自建表**的内容是用户输入，
         # 原样带换行就能伪造「另一张表的掷骰行」或伪造成员发言。掷表输出
-        # 恒定一条头 + 一条正文，正文里的换行以 ⏎ 明示。
+        # 恒定一条头 + 一条正文，正文里的换行以 ⏎ 明示；表名/快捷名/骰式
+        # 同属用户可控字段（2026-10-18 复审：快捷名此前会绕过单行化）。
         # 内置表（i18n 数据）是受信内容，保持引擎原文（多段落是设计的一部分）。
         unless resolution.builtin
           body = truncate_output(oneline(body), MAX_ROLL_BODY)
@@ -1321,9 +1332,9 @@ module TelegramBot
         "#{head}\n#{body}"
       end
 
-      # 把任意用户文本压成单行（换行与 Unicode 行/段分隔符都折成 ⏎）
+      # 把任意用户文本压成单行（换行、NEL、Unicode 行/段分隔符、VT/FF 都折成 ⏎）
       def oneline(text)
-        text.to_s.gsub(/[\r\n\u2028\u2029]/, " ⏎ ")
+        text.to_s.gsub(/[\r\n\u0085\u2028\u2029\v\f]/, " ⏎ ")
       end
 
       def truncate_output(text, limit)
@@ -1349,8 +1360,8 @@ module TelegramBot
 
       def render_table_detail(name, table)
         scope = table.public? ? "公共表" : "本群表"
-        lines = ["表「#{name}」（#{scope}）", "建表者：#{table.author_id}"]
-        dice_part = table.dice.map { |k, v| "#{k} : #{v}" }.join(" , ")
+        lines = ["表「#{oneline(name)}」（#{scope}）", "建表者：#{table.author_id}"]
+        dice_part = table.dice.map { |k, v| "#{oneline(k)} : #{oneline(v)}" }.join(" , ")
         lines << "快捷骰：#{dice_part.empty? ? '（无）' : dice_part}"
         lines << "范围钳：#{range_text(table.datarange)}"
         lines << "权限（前三位=管理位）：#{table.permissions.empty? ? '（无）' : table.permissions.join(' , ')}"
@@ -1369,7 +1380,7 @@ module TelegramBot
 
             lines << line
             printed += 1
-            budget -= line.length
+            budget -= line.length + 1 # +1 = join("\n") 的分隔符
           end
           if printed < sorted.size
             lines << "（共 #{sorted.size} 档，此处显示前 #{printed} 档；" \
@@ -1395,13 +1406,13 @@ module TelegramBot
           budget = MAX_SHOW_TEXT
           printed = 0
           tables.first(MAX_TABLE_LIST).each do |t|
-            dice_part = t.dice.map { |k, v| "#{k} : #{v}" }.join(" , ")
-            line = "#{t.name} — #{dice_part}"
+            dice_part = t.dice.map { |k, v| "#{oneline(k)} : #{oneline(v)}" }.join(" , ")
+            line = "#{oneline(t.name)} — #{dice_part}"
             break if line.length > budget
 
             lines << line
             printed += 1
-            budget -= line.length
+            budget -= line.length + 1 # +1 = join("\n") 的分隔符
           end
           if printed < tables.size
             lines << "（共 #{tables.size} 张，此处显示前 #{printed} 张）"
@@ -1411,10 +1422,11 @@ module TelegramBot
       end
 
       def not_found(name, scope)
+        safe = oneline(name)
         if scope == :public
-          "找不到公共表「#{name}」。"
+          "找不到公共表「#{safe}」。"
         else
-          "找不到表「#{name}」（本群没有这张表；用 /ct list 看本群与公共表）。"
+          "找不到表「#{safe}」（本群没有这张表；用 /ct list 看本群与公共表）。"
         end
       end
 
@@ -1459,6 +1471,15 @@ module TelegramBot
         return false if /\p{Z}|\p{Cc}|\p{Cf}/.match?(text)
 
         true
+      end
+
+      # 存量名字的**寻址**守卫（读/改既有行）：只要求非空且不超长。
+      # 新建/改名走 valid_table_name?（严格）；否则修复前建的表会被
+      # 「能 roll、不能 show/edit」锁死（2026-10-18 复审）。
+      # 显示侧统一由 oneline 折叠，输出不会带出分隔符。
+      def explicit_name?(name)
+        text = name.to_s
+        !text.empty? && text.length <= NAME_MAX_LENGTH
       end
 
       def fetch_table(context, name, scope)

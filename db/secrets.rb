@@ -265,17 +265,15 @@ module TenguDB
       who = user_id.to_i
       return nil if who <= 0
 
-      # 读前清一次（同 create 的惰性 TTL 纪律）：过期结果不该再被取回。
-      begin
-        purge_expired
-      rescue StandardError
-        nil
-      end
-
+      # 过期行在**读侧过滤**而不是读前 DELETE（2026-10-18 复审）：
+      # 旧写法每次 `/secret last` 都带一次全表 DELETE（写锁 + 用不上
+      # (chat_id,user_id,created_at) 索引的 created_at 扫描）。过滤同样
+      # 保证「过期结果取不回」，而写入/启动两处仍会真正清行。
       row = conn.get_first_hash(
-        "SELECT #{COLUMNS} FROM secrets WHERE chat_id = ? AND user_id = ? " \
+        "SELECT #{COLUMNS} FROM secrets " \
+        "WHERE chat_id = ? AND user_id = ? AND created_at >= datetime('now', ?) " \
         "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-        [chat, who]
+        [chat, who, "-#{TTL_DAYS} days"]
       )
       return nil if row.nil?
 

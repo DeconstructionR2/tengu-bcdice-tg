@@ -97,8 +97,18 @@ module TelegramBot
 
       # 余额/道具的固定呈现（天狗 `現万札：**N**  アイテム：…` 的中文版）
       #   N 会过 893 彩蛋（可能变成 👺  -893  👺）
+      # 道具名是用户输入（2026-10-18 复审：只 gsub 空白挡不住 U+2028 等
+      # Unicode 分隔符，会在余额/结算里伪造新行），出口统一单行化。
       def self.balance_line(record)
-        "现万札：#{change893(record.sum_money)}  道具：#{record.item_record.empty? ? '无' : record.item_record.join('、')}"
+        items = record.item_record.map { |name| one_line(name) }.join("、")
+        "现万札：#{change893(record.sum_money)}  道具：#{record.item_record.empty? ? '无' : items}"
+      end
+
+      ONE_LINE_PATTERN = /[\r\n\u0085\u2028\u2029\v\f]/
+
+      # 用户文本出口的单行化（与 custom_table 的 oneline 同口径）
+      def self.one_line(text)
+        text.to_s.gsub(ONE_LINE_PATTERN, " ⏎ ")
       end
 
       # 天狗 change893：金额串**含** "893" 就被小怪包起来（含 1893/8930/-893）。
@@ -202,7 +212,10 @@ module TelegramBot
         # 道具名剥光全部空白（record.js:15：天狗对整条命令先 replace(/\s+/g,"")，
         # 故天狗道具名不可能含空格——「i+秘 传 的 茶」在天狗就是「秘传的茶」。
         # kimi T3.2 评审提案 #3：保留空格是未申报的语义分叉，此处对齐母本）。
-        name = name.to_s.gsub(/\s+/, "")
+        # 2026-10-18 复审：Ruby 的 \s 不含 U+2028/U+2029/NBSP，同属「空白」
+        # 却会穿过这里进库——按母本 replace 语义一并剥掉（\p{Z} 空格类 +
+        # \p{Cc} 控制符）。
+        name = name.to_s.gsub(/[\s\p{Z}\p{Cc}]+/, "")
         return BAD_INPUT if name.empty?
 
         result =
@@ -248,12 +261,18 @@ module TelegramBot
         text << "\n出入金记录：#{flow} = #{self.class.change893(record.sum_money)}" unless flow.nil?
         # 清零发生在发送成功之后（见方法头）：文案不提前宣称「已重置」，
         # 只说明这条命令的语义；真失败会另发一条「清零失败」。
-        text << "\n\n（结算：本条发出后清空本#{record_scope(thread_id)}的记录）"
+        # record_scope 已含「本」字（本群/本话题），不要再前置（2026-10-18 复审）。
+        text << "\n\n（结算：本条发出后清空#{record_scope(thread_id)}内的记录）"
 
         api = context[:api]
         if api.nil?
           # 无发送通道（单测/裁剪接线）：保留「返回文本由调用方发送」的旧契约。
-          _rec, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+          begin
+            _rec, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+          rescue StandardError => e
+            warn_line("[bank] 结算清零异常（chat_id=#{chat_id}）：#{e.class}")
+            return "报表已生成，但清零失败，账目未被重置。请稍后再试。"
+          end
           return "报表已生成，但清零失败，账目未被重置。请稍后再试。" unless deleted
 
           return text
@@ -273,7 +292,14 @@ module TelegramBot
           warn_line("[bank] 报表录制失败（已忽略）：#{e.class}")
         end
 
-        _record, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+        begin
+          _record, _attempted, deleted = bank.statement(chat_id: chat_id, thread_id: thread_id)
+        rescue StandardError => e
+          # 报表已发出：清零抛异常时不能再让外层 rescue 变成「存储层出错」
+          # 的同一条错误（用户会误以为报表没发出去而重试 → 重复报表）。
+          warn_line("[bank] 结算清零异常（chat_id=#{chat_id}）：#{e.class}")
+          return "报表已发出，但清零失败，账目未被重置。请稍后再试。"
+        end
 
         unless deleted
           warn_line("[bank] 结算清零失败（chat_id=#{chat_id}）")

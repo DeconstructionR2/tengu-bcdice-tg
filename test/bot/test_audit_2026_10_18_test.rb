@@ -38,6 +38,9 @@ class TestDiceLimits < Minitest::Test
   def test_sides_over_limit
     assert_includes TelegramBot::DiceLimits.violation("1d1000000"), "骰面数"
     assert_includes TelegramBot::DiceLimits.violation("1d10001"), "骰面数"
+    # 骰数省略的形态（`d1000000` = 1d1000000）——2026-10-18 复审实测旧正则漏掉
+    assert_includes TelegramBot::DiceLimits.violation("d1000000"), "骰面数"
+    assert_includes TelegramBot::DiceLimits.violation("D10001"), "骰面数"
   end
 
   def test_valid_expressions_pass
@@ -46,6 +49,8 @@ class TestDiceLimits < Minitest::Test
     assert_nil TelegramBot::DiceLimits.violation("1d10000")
     assert_nil TelegramBot::DiceLimits.violation("3d6+2")
     assert_nil TelegramBot::DiceLimits.violation("2d")
+    assert_nil TelegramBot::DiceLimits.violation("d6")
+    assert_nil TelegramBot::DiceLimits.violation("d10000")
   end
 
   def test_handler_turns_over_limit_into_a_readable_message
@@ -254,6 +259,59 @@ class TestCustomTableAuditFixes < Minitest::Test
     assert_includes out, "表名无效"
   end
 
+  def test_unicode_line_separator_is_rejected_in_dice_names
+    ct("create dl")
+    out = ct("dice set dl k\u2028fake 1d6")
+    assert_includes out, "快捷名", "快捷名与表名同口径：Unicode 分隔符必须拒绝"
+    table = @ct.fetch(chat_id: -100, name: "dl", scope: :private)
+    assert_nil table.dice["k\u2028fake"]
+  end
+
+  def test_legacy_table_name_with_separator_is_still_readable
+    # 修复前建的表可能含 U+2028：show 不能用新规则把自己锁死
+    @conn.execute(
+      "INSERT INTO custom_tables (scope, chat_id, name, spec, permissions, datarange, author_id) " \
+      "VALUES ('private', -100, ?, '{\"dice\":{\"a\":\"1d6\"},\"data\":{}}', '[42]', '{}', 42)",
+      ["old\u2028table"]
+    )
+    out = ct("show old\u2028table")
+    assert_includes out, "表「old ⏎ table」", "读得到，且显示时折叠分隔符"
+    refute_includes out, "\u2028"
+  end
+
+  def test_legacy_table_can_be_renamed_to_a_valid_name
+    @conn.execute(
+      "INSERT INTO custom_tables (scope, chat_id, name, spec, permissions, datarange, author_id) " \
+      "VALUES ('private', -100, ?, '{\"dice\":{\"a\":\"1d6\"},\"data\":{}}', '[42]', '{}', 42)",
+      ["old\u2028table"]
+    )
+
+    out = ct("rename old\u2028table cleaned")
+
+    assert_includes out, "表名已更新"
+    refute_nil @ct.fetch(chat_id: -100, name: "cleaned", scope: :private)
+    assert_nil @ct.fetch(chat_id: -100, name: "old\u2028table", scope: :private)
+  end
+
+  def test_roll_not_found_message_flattens_separators
+    out = ct("roll nosuch\u2028line")
+    assert_includes out, "找不到表"
+    refute_includes out, "\u2028", "找不到表时也不能把原始表名带进输出"
+  end
+
+  def test_roll_head_flattens_separators_from_stored_dice_name
+    ct("create rh")
+    # 绕过 handler 校验直接写库，模拟修复前的存量数据
+    row = @conn.get_first_hash("SELECT spec FROM custom_tables WHERE name = 'rh'")
+    spec = JSON.parse(row["spec"])
+    spec["dice"]["k\u2028fake"] = "1d6"
+    @conn.execute("UPDATE custom_tables SET spec = ? WHERE name = 'rh'", [JSON.generate(spec)])
+
+    out = ct("roll rh k\u2028fake")
+    refute_includes out, "\u2028", "掷表头部的快捷名必须折叠"
+    assert_includes out, "⏎"
+  end
+
   def test_overlong_dice_shortcut_name_is_rejected
     ct("create longname")
     out = ct("dice set longname #{'b' * 40} 1d6")
@@ -315,7 +373,37 @@ class TestBankStatementOrdering < Minitest::Test
     assert_nil out, "发送成功后 handler 不再返回文本（避免 router 二次发送）"
     assert_equal 1, api.sent.size
     assert_includes api.sent.first[:text], "结果"
+    assert_includes api.sent.first[:text], "结算：本条发出后清空"
+    refute_includes api.sent.first[:text], "本本", "record_scope 已含「本」字"
     assert_nil @bank.fetch(chat_id: CHAT, thread_id: nil), "发送成功后清零"
+  end
+
+  def test_clear_exception_is_reported_as_clear_failure
+    real = @bank
+    wrapper = Object.new
+    wrapper.define_singleton_method(:fetch) { |**kw| real.fetch(**kw) }
+    wrapper.define_singleton_method(:statement) { |**_kw| raise SQLite3::BusyException, "busy" }
+
+    handler = TelegramBot::Handlers::BankHandler.new(
+      bank: wrapper, logger: Logger.new(IO::NULL)
+    )
+    out = handler.call(name: "bank", args: "statement", chat_id: CHAT, thread_id: nil,
+                       user_id: 1, api: RecordingApi.new)
+
+    assert_includes out, "报表已发出，但清零失败"
+    refute_includes out, "存储层出错", "报表已发出时不能再报通用的存储层错误"
+    refute_nil real.fetch(chat_id: CHAT, thread_id: nil), "清零失败时账目保留"
+  end
+
+  def test_item_name_with_unicode_separator_is_stripped
+    sep = "\u2028"
+    handler.call(name: "bank", args: "item add x#{sep}FAKE", chat_id: CHAT,
+                 thread_id: nil, user_id: 1, api: RecordingApi.new)
+    out = handler.call(name: "bank", args: "balance", chat_id: CHAT,
+                       thread_id: nil, user_id: 1, api: RecordingApi.new)
+
+    refute_includes out, sep, "道具名里的 Unicode 分隔符必须被剥掉"
+    assert_includes out, "xFAKE"
   end
 
   def test_statement_output_is_recorded_to_session_log
@@ -372,6 +460,21 @@ class TestSecretsPurgeOnInit < Minitest::Test
     TenguDB::Secrets.new(conn)
 
     assert_equal 0, conn.get_first_value("SELECT count(*) FROM secrets").to_i
+  ensure
+    conn&.close
+  end
+
+  def test_latest_for_filters_expired_rows_without_writing
+    conn = TenguDB::Connection.open(path: ":memory:")
+    secrets = TenguDB::Secrets.new(conn)
+    conn.execute(
+      "INSERT INTO secrets (id, chat_id, thread_id, user_id, command, result_text, created_at) " \
+      "VALUES ('stale', -100, 0, 1, '2d6', 'x', datetime('now', '-30 days'))"
+    )
+
+    assert_nil secrets.latest_for(chat_id: -100, user_id: 1), "过期结果不得被取回"
+    assert_equal 1, conn.get_first_value("SELECT count(*) FROM secrets").to_i,
+                 "读路径不再 DELETE（清理留给 create/启动）"
   ensure
     conn&.close
   end

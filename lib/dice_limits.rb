@@ -26,8 +26,12 @@ module TelegramBot
     # 隐式面数（`2d` → `2d6`，见引擎 replace_implicit_d）
     IMPLICIT_SIDES = 6
 
-    # NdM / NBM（B = バラバラ、大小写不敏感；面数可省略）
-    DICE_TOKEN = /(\d+)\s*[dDbB](\d*)/
+    # NdM / NBM（B = バラバラ、大小写不敏感；骰数与面数都可省略）：
+    #   - **骰数省略**（`d1000000`）：引擎按 1 颗处理 → 必须能匹配，
+    #     否则面数上限形同虚设（2026-10-18 复审实测：`d1000000` 直接
+    #     绕过旧正则，引擎照样给 `＞ 0`）。
+    #   - 面数省略（`2d` → 2d6）。
+    DICE_TOKEN = /(\d*)\s*[dDbB](\d*)/
 
     BAD_DICE_COUNT = "骰子数量超出上限：一次最多 %<max>d 颗（你写了 %<got>d 颗）。"
     BAD_DICE_SIDES = "骰面数超出上限：单颗最多 %<max>d 面（你写了 %<got>d 面）。"
@@ -38,7 +42,7 @@ module TelegramBot
     # @return [String, nil] nil = 通过；String = 可直接回给用户的错误文案
     def violation(expr)
       expr.to_s.scan(DICE_TOKEN) do |times, sides|
-        count = times.to_i
+        count = times.empty? ? 1 : times.to_i
         faces = sides.empty? ? IMPLICIT_SIDES : sides.to_i
 
         if count > MAX_DICE

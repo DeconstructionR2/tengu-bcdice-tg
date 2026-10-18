@@ -234,6 +234,11 @@ module TelegramBot
         lines << "作用域：#{scope}"
         lines << "时间段：#{log.created_at} ～ #{log.ended_at}（UTC）" # kimi T3.5 评审提案 #7：UTC 必须标注
         lines << "条目数：#{entries.size}"
+        # 上限提示（2026-10-18 复审）：到达上限后录制停写，导出必须自证不完整，
+        # 否则「共 N 条」会让人以为从头到尾都在。
+        if entries.size >= TenguDB::SessionLogs::MAX_ENTRIES
+          lines << "（已达单 log 上限 #{TenguDB::SessionLogs::MAX_ENTRIES} 条；之后的消息未录制）"
+        end
         lines << "-----"
         entries.each do |entry|
           marker = entry.bot? ? "[bot] " : ""
