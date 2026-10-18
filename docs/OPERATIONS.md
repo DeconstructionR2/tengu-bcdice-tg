@@ -56,7 +56,7 @@ cd /opt/<project>/src && sudo docker build --no-cache -t tengu-bcdice-tg:latest 
 ```
 
 **构建闸门（计划 §9 原样获得）**：builder 阶段跑 `bundle exec rake verify`
-（spike 19 项 + 引擎层 785 + bot/db 888）——**任何一段红 = `RAKE` non-zero =
+（spike 19 项 + 引擎层 785 + bot/db 896）——**任何一段红 = `RAKE` non-zero =
 构建失败、新镜像不产出**，旧容器全程不动。（T4.1 实测：三段全绿才
 `Successfully built`，证据 `/opt/<project>/t4.1-evidence/t4.1-build.log`。）
 
@@ -117,16 +117,8 @@ sudo docker tag tengu-bcdice-tg:latest tengu-bcdice-tg:rollback-$(date +%Y%m%d)
 同日多轮换版要给名字加 `-rN` 后缀防撞名（2026-10-12 实况：同日三轮 =
 `rollback-20261012` / `-r2` / `-r3`；直接重跑上面命令会**顶掉**最早那个锚点）。
 
-当前保存的 tag（2026-10-18 实测 `sudo docker images`，会随版本演进）：
-`tengu-bcdice-tg:latest`（`db893c631862`，S2-audit 复现验证后全量修复版：
-用户文本单行化 / 骰数面数上限 / 结算先发后清 / 管理位回执 / 日志上限 /
-负出目 / UTF-16 切段 / 嵌套事务 SAVEPOINT 等，**888 runs** 口径；基线含
-`3c43daf`（S2-audit）全部成果）+ 回滚锚点 `rollback-20261018`
-（`b2ef6b431df7`，S1-audit 版，863 口径）。本轮中断的中间构建
-`6b0cdc189f7c` 与更早的 `80161449e6d8` / `d482ab916643` 已随换版清理；
-历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户拍板的
-「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；
-**换版前仍按上文纪律给现役镜像留新锚点**，无锚点时的回滚走 §2.3 的 git 重建流程。
+当前保存的 tag（2026-10-18 下午实测 `sudo docker images`，会随版本演进）：
+`tengu-bcdice-tg:latest`（`3840636c846a`，S2.1-audit 复审回归修复版：快捷名/roll 回执单行化 / `d1000000` 面数上限 / 存量表名兼容 / 结算文案与清零异常 / secret 读路径等，**896 runs** 口径；基线含 `99ac1ee`）+ 回滚锚点 `rollback-20261018-r2`（`db893c631862`，S2-audit 版，888 口径）与 `rollback-20261018`（`b2ef6b431df7`，S1-audit 版，863 口径）。更早的 `6b0cdc189f7c` / `80161449e6d8` / `d482ab916643` 已随换版清理；历史 tag（T4.1 时代两枚 + `rollback-20261012-r2/r3`）已按用户拍板的「代码可重建」原则于 2026-10-12 全部清理（合计释放约 158MB）；**换版前仍按上文纪律给现役镜像留新锚点**，无锚点时的回滚走 §2.3 的 git 重建流程。
 
 ### 1.5 部署后验证（T4.5 上线时执行）
 
@@ -599,8 +591,28 @@ Faraday::TimeoutError）→ 旧代码把**一切** ResponseError 误报为
    `normalize_chat_id`；`admin` 缓存超过 512 条时整体扫过期项。
 9. **Chunker**：改按 **UTF-16 码元**计数（星平面字符算 2），与 Telegram 的
    4096 口径一致（此前 4096 个 emoji 会切出 8192 单位被 400）。
-10. **订正**：测试基线 863 → **888**（+25 钉测，`test_audit_2026_10_18_test.rb`）。
+10. **订正**：测试基线 863 → **896**（+33 钉测，`test_audit_2026_10_18_test.rb`）。
     刻意保留：`/bank reset`/`statement` 无权限模型（上游同款，用户拍板）。
+
+### 5.7 复审回归修复登记（2026-10-18 下午，第七棒：上线后两路独立复审）
+
+对 S2 修复做处理层/存储层两路独立复审（真引擎 + 真 handler 探针 + 全量测试
+基线核对），修掉修复本身的洞与回归：
+
+1. **快捷名的 Unicode 分隔符**（高）：`DICE_NAME_FORBIDDEN` 只挡 `\s`，
+   `k<U+2028>fake` 能进库并在 `/ct show` / `/ct roll` / `list` 输出里带出
+   分隔符 → 与表名同口径（`\p{Z}`/`Cc`/`Cf`），输出侧字段统一 `oneline`。
+2. **`d1000000` 绕过面数上限**（高）：省略骰数的形态没被 `DICE_TOKEN` 匹配，
+   引擎按 1 颗处理并静默 `＞ 0` → 正则改 `(\d*)[dDbB](\d*)`，空骰数按 1 计。
+3. **`/ct roll` 回执拼接原始表名**（高）：找不到表/骰式坏掉时用裸 `name`，
+   U+2028 可伪造一行 → 全部 `oneline`。
+4. **存量表名兼容**（中）：新规则让修复前建的表「能 roll 不能 show/edit」
+   → 新增 `explicit_name?`（读/改既有行走宽松，新建/改名仍严格）。
+5. **结算文案「本本群」**（中）、**道具名分隔符注入**（中）、
+   **清零异常被报成存储层错误导致重复报表**（中）。
+6. **低**：`/ct show` 预算补换行符；`oneline` 补 NEL/VT/FF；日志达上限时
+   导出页头自证不完整；`/secret last` 读路径不再 DELETE（改 TTL 过滤）。
+7. 测试基线 **888 → 896**（+8 钉测）。
 
 ## 6. 紧急处置（bot 无响应时的排查顺序）
 
